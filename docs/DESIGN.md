@@ -39,7 +39,7 @@ by the bridge. No interactive prompts.
 `stdio --config FILE` serves the SAME dispatcher as JSON lines: request
 `{id,method,path,query,body}` → `{id,status,headers,body}`. IDs are nonempty safe
 ASCII strings or nonnegative integer tokens. Requests may overlap and replies
-are correlated by id; a cancellation request is another line. EOF/Ctrl-C cancels
+are correlated by id; a cancellation request is another line. EOF drains submitted requests; broken output or Ctrl-C cancels
 in-flight requests, closes sessions and reaps children. No Scanner frame ceiling.
 
 ## Configuration, policy and ownership
@@ -76,7 +76,8 @@ Race/integration tests use readiness events, disconnect/Ctrl-C, complete large r
 concurrent calls, malformed input and mutation controls; no test success from import errors.
 Cross-compile Linux x64/arm64, macOS x64/arm64 and Windows x64; no workflows/releases.
 
-Next: resources list/read and prompts list/get with typed arguments; remote
+Next: GET `/v1/servers/{server}/resources`, GET `.../resources/read?uri=...`,
+GET `.../prompts`, POST `.../prompts/{prompt}/get` with typed arguments; remote
 streamable HTTP/SSE with loopback SDK fixtures; resumable progress API; then a thin
 lmcode host (manifest v1 required boolean dry, invalid metadata exit 2 before dispatch,
 dry describes calls and starts nothing, result sink/frame and exits 0/2/3/4).
