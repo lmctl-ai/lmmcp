@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,9 @@ const canary = "SYNTHETIC_TEST_SECRET_NEVER_REAL_350"
 func TestMockProcess(t *testing.T) {
 	if os.Getenv("LMMCP_TEST_SERVER") != "1" {
 		return
+	}
+	if file := os.Getenv("LMMCP_PID_FILE"); file != "" {
+		os.WriteFile(file, []byte(strconv.Itoa(os.Getpid())), 0600)
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
 	type Args struct {
@@ -370,5 +374,92 @@ func TestAPIContractEdges(t *testing.T) {
 		if Exit(Response{Status: status}) != want {
 			t.Fatal(status)
 		}
+	}
+}
+func TestAllowAndHostPolicy(t *testing.T) {
+	g, _ := fixture(t, false)
+	c := g.cfg.Servers["mock"]
+	c.AllowTools = []string{}
+	g.cfg.Servers["mock"] = c
+	if r := request(g, "POST", "/v1/servers/mock/tools/echo/call", `{"value":"x"}`); r.Status != 403 || g.StartCount() != 0 {
+		t.Fatal(r)
+	}
+	handler := g.Handler("", "127.0.0.1:8888")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "http://evil.invalid/v1/servers", nil))
+	if w.Code != 403 {
+		t.Fatal(w.Code)
+	}
+}
+func TestOnlyDeclaredEnvIsRead(t *testing.T) {
+	exe, _ := os.Executable()
+	var mu sync.Mutex
+	var names []string
+	cfg := Config{Servers: map[string]ServerConfig{"mock": {Command: exe, Args: []string{"-test.run=TestMockProcess"}, Env: map[string]string{"LMMCP_TEST_SERVER": "1"}}}}
+	g, _ := New(cfg, Options{Lookup: func(n string) (string, bool) {
+		mu.Lock()
+		names = append(names, n)
+		mu.Unlock()
+		return "synthetic", true
+	}})
+	defer g.Close()
+	if r := request(g, "GET", "/v1/servers/mock/tools", ""); r.Status != 200 {
+		t.Fatal(r)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, n := range names {
+		if n != "PATH" {
+			t.Fatal("read undeclared environment", n)
+		}
+	}
+}
+func TestOwnedShutdownWait(t *testing.T) {
+	g, _ := fixture(t, false)
+	request(g, "GET", "/v1/servers/mock/tools", "")
+	child := g.entries["mock"].process
+	defer func() {
+		if child.command.ProcessState == nil {
+			_ = child.command.Wait()
+		}
+	}()
+	g.Close()
+	if child.command.ProcessState == nil || child.state == nil {
+		t.Fatal("owned child not reaped")
+	}
+}
+func TestRemoteDoesNotConnect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("remote transport executed in slice 1") }))
+	defer srv.Close()
+	g, _ := New(Config{Servers: map[string]ServerConfig{"remote": {URL: srv.URL, Headers: map[string]string{"Authorization": "${NOT_READ}"}}}}, Options{Lookup: func(string) (string, bool) { t.Error("remote credential read"); return "", false }})
+	defer g.Close()
+	if r := request(g, "GET", "/v1/servers/remote/tools", ""); r.Status != 501 {
+		t.Fatal(r)
+	}
+}
+func TestToolErrorCode(t *testing.T) {
+	g, _ := fixture(t, false)
+	r := request(g, "POST", "/v1/servers/mock/tools/error/call", `{}`)
+	b, _ := json.Marshal(r.Body)
+	if !strings.Contains(string(b), `"code":"TOOL_ERROR"`) {
+		t.Fatal(string(b))
+	}
+}
+func TestMissingEnvNoChild(t *testing.T) {
+	exe, _ := os.Executable()
+	g, _ := New(Config{Servers: map[string]ServerConfig{"mock": {Command: exe, Args: []string{"-test.run=TestMockProcess"}, Env: map[string]string{"LMMCP_TEST_SERVER": "1", "KEY": "${MISSING}"}}}}, Options{Lookup: func(string) (string, bool) { return "", false }})
+	defer g.Close()
+	if r := request(g, "GET", "/v1/servers/mock/tools", ""); r.Status != 502 || g.StartCount() != 0 {
+		t.Fatal(r)
+	}
+}
+func TestEscapedSecretsAreBlocked(t *testing.T) {
+	g, _ := fixture(t, false)
+	secret := "synthetic\nquoted\"secret-é"
+	g.opts.Lookup = func(n string) (string, bool) { return secret, n == "FIXTURE_SECRET" }
+	r := request(g, "POST", "/v1/servers/mock/tools/secret/call", `{}`)
+	b, _ := json.Marshal(r.Body)
+	if r.Status != 502 || strings.Contains(string(b), "quoted") {
+		t.Fatal(r)
 	}
 }
