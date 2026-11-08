@@ -1,2 +1,4 @@
 /lmmcp
 *.exe
+__pycache__/
+*.py[cod]
