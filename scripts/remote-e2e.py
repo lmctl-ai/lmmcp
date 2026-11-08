@@ -9,7 +9,8 @@ with tempfile.TemporaryDirectory(prefix='lmmcp-script-') as tmp:
  def cli(*args,code=0):
   r=subprocess.run([a.binary,*args,'--config',str(config)],env=env,text=True,capture_output=True);assert r.returncode==code,(r.returncode,r.stdout,r.stderr);return json.loads(r.stdout)
  assert cli('servers')['ok'];assert len(cli('tools','fixture')['data'])==6
- assert cli('call','fixture','add','--json','{"left":2,"right":4}')['data']['structuredContent']['sum']==6
+ added=cli('call','fixture','add','--json','{"left":2,"right":4}')['data']
+ assert (added['content'][0]['text'].strip() in ('6','6.0') if a.version=='2024-11-05' else added['structuredContent']['sum']==6)  # 2024-11-05 has no structuredContent
  assert cli('call','fixture','fail','--json','{}',code=3)['data']['isError']
  assert len(cli('resources','fixture')['data'])==2
  assert cli('read','fixture','mock://blob')['data']['contents'][0]['blob']=='AAEC'

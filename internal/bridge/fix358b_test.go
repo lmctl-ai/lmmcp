@@ -277,3 +277,17 @@ func TestAutoFallsBackToLegacySSEOnlyOnNonAuth4xx(t *testing.T) {
 		}
 	}
 }
+
+func TestPromptArgumentsMustBeAStringObject(t *testing.T) {
+	s := newStub(t)
+	g := s.gateway(t, nil)
+	for _, bodyText := range []string{`{"n":1}`, `{"n":null}`, `{"n":["a"]}`, `[]`, `"x"`, `null`, `42`, ``} {
+		r := request(g, "POST", "/v1/servers/r/prompts/nope", bodyText)
+		if r.Status != 400 || !strings.Contains(body(r), "INVALID_ARGUMENTS") {
+			t.Errorf("%q: %d %s", bodyText, r.Status, body(r))
+		}
+	}
+	if s.count("prompts/get") != 0 {
+		t.Fatal("an invalid argument object reached the server")
+	}
+}

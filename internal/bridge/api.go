@@ -176,6 +176,15 @@ func (g *Gateway) Dispatch(ctx context.Context, r Request) Response {
 			if Decode(r.Body, &args) != nil || args == nil {
 				return failure(400, "INVALID_ARGUMENTS")
 			}
+			var raw map[string]json.RawMessage // a JSON null would decode as "" above; prompt arguments are strings
+			if Decode(r.Body, &raw) != nil {
+				return failure(400, "INVALID_ARGUMENTS")
+			}
+			for _, v := range raw {
+				if string(v) == "null" {
+					return failure(400, "INVALID_ARGUMENTS")
+				}
+			}
 			return g.prompt(ctx, p[2], p[4], args)
 		}
 		return failure(404, "NOT_FOUND")

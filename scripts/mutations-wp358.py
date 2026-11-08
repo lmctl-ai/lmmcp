@@ -38,13 +38,13 @@ mutations=[
 ('metadata-v6-allowed',[(S,' || ip.Equal(metadataV6)','')]),
 ('dial-time-check-removed',[(S,'if forbiddenAddress(ip) || !allowPrivate','if !allowPrivate')]),
 ('private-flag-ignored',[(R,'	return c.AllowPrivateAddresses == nil || *c.AllowPrivateAddresses\n','	return true\n')]),
-('port-unchecked',[(R,'if err != nil || n < 1 || n > 65535 {','if err != nil {')]),
+('port-unchecked',[(R,'if err != nil || n < 1 || n > 65535 {','if err != nil || n < -1 || n > 1<<40 {')]),
 ('userinfo-in-origin-hop',[(R,'req.URL.User != nil || !sameOrigin','!sameOrigin')]),
 ('default-port-not-normalised',[(R,'		if u.Scheme == "https" {\n			return "443"\n		}\n		return "80"','		return "0"')]),
 ('watch-window-unbounded',[(N,'const classifyWindow = 4096','const classifyWindow = 1 << 40')]),
 ('watch-overflow-ignored',[(N,'				overflow = true\n','')]),
 ('client-metadata-literal',[(M,' || ip != nil && bridge.ForbiddenAddress(ip)','')]),
-('config-code-generic',[(M,'	if errors.As(e, &be) && be.Code != "" {','	if false {')]),
+('config-code-generic',[(M,'	if errors.As(e, &be) && be.Code != "" {','	if errors.As(e, &be) && false {')]),
 ]
 if a.only:mutations=[m for m in mutations if m[0] in a.only.split(',')]
 results=[]
