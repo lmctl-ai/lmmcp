@@ -66,7 +66,7 @@ Retry is decided per call from its own trace, never from shared state: a call ma
 sent again once, and only if nothing was written (its session had already failed)
 or its own POST was answered 404 for the session id. A call whose request was
 written is never re-sent. JSON-RPC errors become typed REST errors with `mcpCode`
-(404 RESOURCE_NOT_FOUND/PROMPT_NOT_FOUND, 400 INVALID_PARAMS, 502 for internal or
+(404 RESOURCE_NOT_FOUND/PROMPT_NOT_FOUND/METHOD_NOT_SUPPORTED, 400 INVALID_PARAMS, 502 for internal or
 server-defined errors) and never replace the session. A session is replaced only
 when it cannot carry work (missing, closed) and never under running calls: it is
 retired and closed by its last user. List changes rotate the session on next idle

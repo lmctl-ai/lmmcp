@@ -157,9 +157,9 @@ Local gates: `go vet ./...`, `CGO_ENABLED=1 go test -race ./...` (requires a C c
 to the SHA-256-verified lmmock v0.1.111 asset and `LMMCP_TEST_PROGRAM` to its compiled
 `examples/mcp/server.lms`; `scripts/prepare-mock.sh v0.1.111 /absolute/private/dir`
 downloads, verifies and compiles both and prints the `export` lines. The remote
-lmscript cells run as `lmmock exec --lmcode PROGRAM --config '{"protocolVersion":V}'
+lmscript cells run as `lmmock exec --lmcode PROGRAM --config /path/to/mock-config.json
 -- python3 scripts/remote-e2e.py --binary lmmcp --lmscript LMSCRIPT --mode json|sse
---version V`. The integration fixture explicitly sets JSON/SSE mode
+--version V` (where `mock-config.json` contains `{"protocolVersion":V,"bearerToken":""}`). The integration fixture explicitly sets JSON/SSE mode
 through `/__mock/reply-mode`; its config `replyMode` alone has no effect.
 `scripts/mutations-slice2.py` and `scripts/remote-e2e.py` reproduce adversarial and
 actual CLI/lmscript checks. See [short design](docs/DESIGN.md).

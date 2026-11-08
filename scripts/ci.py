@@ -15,6 +15,8 @@ def main():
   if result.returncode:
    sys.stderr.write(log.read_text());raise SystemExit(result.returncode)
  if not args.skip_prepare:run('prepare-mock',['bash','scripts/prepare-mock.sh','v0.1.111',str(mock)])
+ tracked=subprocess.run(['git','ls-files'],cwd=ROOT,capture_output=True,text=True,check=True).stdout.splitlines()
+ if any('__pycache__/' in p or p.endswith(('.pyc','.pyo','.pyd')) for p in tracked):raise SystemExit('tracked bytecode or __pycache__ found')
  run('notices',['python3','scripts/third_party_notices.py','--go',args.go,'--verify'])
  run('vet',[args.go,'vet','./...']);run('race',[args.go,'test','-race','-tags','integration','./...'])
  binaries=[]

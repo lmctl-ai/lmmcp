@@ -54,10 +54,15 @@ func TestRemoteTransportIgnoresProxyEnvironment(t *testing.T) {
 func TestAbortReleasesStuckTeardown(t *testing.T) {
 	s := newStub(t)
 	stuck := make(chan struct{})
+	releaseStuck := make(chan struct{})
+	t.Cleanup(func() { close(releaseStuck) })
 	s.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "DELETE" {
 			close(stuck)
-			<-r.Context().Done()
+			select {
+			case <-r.Context().Done():
+			case <-releaseStuck:
+			}
 			return
 		}
 		s.ServeHTTP(w, r)
@@ -77,7 +82,7 @@ func TestAbortReleasesStuckTeardown(t *testing.T) {
 	g.Abort()
 	select {
 	case <-closed:
-	case <-time.After(10 * time.Second):
+	case <-time.After(1 * time.Second):
 		t.Fatal("Abort did not release the teardown")
 	}
 }
@@ -101,7 +106,7 @@ func TestCancelNotificationDeliveredLegacySSEAndStreamable(t *testing.T) {
 		if r := <-done; r.Status != 499 {
 			t.Fatal(body(r))
 		}
-		for deadline := time.Now().Add(5 * time.Second); s.count("notifications/cancelled") == 0; time.Sleep(10 * time.Millisecond) {
+		for deadline := time.Now().Add(1 * time.Second); s.count("notifications/cancelled") == 0; time.Sleep(10 * time.Millisecond) {
 			if time.Now().After(deadline) {
 				t.Fatal("streamable server never received notifications/cancelled")
 			}
@@ -177,7 +182,7 @@ func TestCancelNotificationDeliveredLegacySSEAndStreamable(t *testing.T) {
 			if id != want {
 				t.Fatalf("cancelled request %s, call was %s", id, want)
 			}
-		case <-time.After(10 * time.Second):
+		case <-time.After(1 * time.Second):
 			t.Fatal("legacy SSE server never received notifications/cancelled")
 		}
 	})

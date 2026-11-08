@@ -45,13 +45,35 @@ mutations=[
 ('watch-overflow-ignored',[(N,'				overflow = true\n','')]),
 ('client-metadata-literal',[(M,' || ip != nil && bridge.ForbiddenAddress(ip)','')]),
 ('config-code-generic',[(M,'	if errors.As(e, &be) && be.Code != "" {','	if errors.As(e, &be) && false {')]),
+# wp361 reviewer survivors and wp362 fix controls
+('dial-cgnat-allowed',[(S,'return ip.IsPrivate() || ip.IsLoopback() || cgnat.Contains(ip)','return ip.IsPrivate() || ip.IsLoopback()')]),
+('dial-linklocal-multicast-allowed',[(S,'return ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.Equal(metadataV6)','return ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.Equal(metadataV6)')]),
+('dial-control-loopback-literal-broken',[(S,'!(loopbackLiteral && normalizeIP(ip).IsLoopback())','true')]),
+('dial-control-unparseable-allowed',[(S,'ip, ok := parseHostIP(host)\n\t\tif !ok {','ip, ok := parseHostIP(host)\n\t\tif false && !ok {')]),
+('parse-host-ip-zone-ignored',[(S,'addr = addr.WithZone("").Unmap()','if addr.Zone() != "" {\n\t\t\treturn nil, false\n\t\t}\n\t\taddr = addr.Unmap()')]),
+('parse-host-ip-legacy-v4-disabled',[(S,'return parseLegacyIPv4(trimmed)','return nil, false')]),
+('retry-rejected-ignores-404',[(R,'if res.StatusCode == 404 && req.Header.Get("Mcp-Session-Id") != "" {','if res.StatusCode == 404 && false {')]),
+('retry-other-not-incremented-on-roundtrip-error',[(R,'\t\tif post {\n\t\t\ttrace.other.Add(1)\n\t\t}','\t\tif false && post {\n\t\t\ttrace.other.Add(1)\n\t\t}')]),
+('cancel-notification-ignores-id',[(R,'return env.JSONRPC == "2.0" && len(env.ID) == 0 && env.Method == "notifications/cancelled"','return env.JSONRPC == "2.0" && env.Method == "notifications/cancelled"')]),
+('disable-standalone-sse-false',[(R,'DisableStandaloneSSE: true','DisableStandaloneSSE: false')]),
+('watch-changes-omitted-version-skipped',[(R,'if !legacy && session.ID() != "" && version != "2026-07-28" && (session.InitializeResult() == nil || session.InitializeResult().ProtocolVersion != "2026-07-28") {','if version == "2025-11-25" && !legacy && session.ID() != "" {')]),
+('transport-force-http2-disabled',[(R,'ForceAttemptHTTP2: true','ForceAttemptHTTP2: false')]),
+('teardown-delete-missing-protocol-version-header',[(R,'\tif init := session.InitializeResult(); init != nil && init.ProtocolVersion != "" {\n\t\treq.Header.Set("Mcp-Protocol-Version", init.ProtocolVersion)','\tif init := session.InitializeResult(); false && init != nil && init.ProtocolVersion != "" {\n\t\treq.Header.Set("Mcp-Protocol-Version", init.ProtocolVersion)')]),
+('teardown-skip-delete-not-set',[(R,'\tdefer r.skipDelete.Store(true)','\tdefer r.skipDelete.Store(false)')]),
+('teardown-retired-not-closed-on-invalidate',[(G,'\tfor session, r := range e.retired {','\tfor session, r := range (map[*mcp.ClientSession]*retiredConn(nil)) {')]),
+('get-closed-recheck-after-gate-removed',[(G,'\tif closed || g.ctx.Err() != nil || ctx.Err() != nil {','\tif false && (closed || g.ctx.Err() != nil || ctx.Err() != nil) {')]),
+('teardown-second-signal-watcher-disabled',[(M,'\t\tsignal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)','\t\t_ = sig')]),
+('client-url-safe-dialer-removed',[(M,'Transport: &http.Transport{Proxy: nil, DialContext: bridge.SafeDialer().DialContext, ForceAttemptHTTP2: true}','Transport: &http.Transport{Proxy: nil, ForceAttemptHTTP2: true}')]),
+('rpc-method-not-found-branch-removed',[(RE,'\tcase code == jsonrpc.CodeMethodNotFound:','\tcase false && code == jsonrpc.CodeMethodNotFound:')]),
+('rpc-invalid-params-resource-not-found-removed',[(RE,'\tcase code == jsonrpc.CodeInvalidParams && kind == "resource" && missing:','\tcase false && code == jsonrpc.CodeInvalidParams && kind == "resource" && missing:')]),
+('rpc-unknown-argument-treated-as-missing',[(RE,'\t\t\t\tcase "argument", "arguments", "parameter", "parameters", "field", "fields", "option", "options":\n\t\t\t\t\tcontinue','\t\t\t\tcase "never-matched":\n\t\t\t\t\tcontinue')]),
 ]
 if a.only:mutations=[m for m in mutations if m[0] in a.only.split(',')]
 results=[]
 with tempfile.TemporaryDirectory(prefix='copy-',dir=e) as tmp:
  copy=pathlib.Path(tmp)
  for name in ['go.mod','go.sum']:shutil.copy2(root/name,copy/name)
- for name in ['cmd','internal']:shutil.copytree(root/name,copy/name)
+ for name in ['cmd','internal','examples']:shutil.copytree(root/name,copy/name)
  tags=['-tags','integration'] if os.environ.get('LMMCP_TEST_LMMOCK') else []
  for name,edits in mutations:
   originals={}

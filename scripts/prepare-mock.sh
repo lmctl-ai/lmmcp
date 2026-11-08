@@ -5,9 +5,10 @@ set -euo pipefail
 if [ $# -eq 1 ]; then tag=v0.1.111; dest=$1; elif [ $# -eq 2 ]; then tag=$1; dest=$2; else echo 'usage: prepare-mock.sh [TAG] ABSOLUTE_DIR' >&2; exit 2; fi
 case "$dest" in /*) ;; *) echo 'DIR must be absolute' >&2; exit 2;; esac
 case "$tag" in
+  v0.1.112) source_commit=7637f670e5abdf450f0f13c9b8dca4178a016ea4; sums_digest=4b0e3aef765df3ac23235e07f549059f7a00212b7be9e346c4874a4fc95296a9;;
   v0.1.111) source_commit=91d832a8e4d8d0f5c7f9b709fb372ad45b381b42; sums_digest=2cea99c81c49f4c16c38987c27f7fa370b28a711e82067eb9a18564905e49f5c;;
   v0.1.110) source_commit=025eaed53b5ea7c6b568681fec8dc6deb821ed21; sums_digest=ce735f274a0ece8cce847500816487573488203f2fffc5a6d6e856e8e18c623f;;
-  *) echo 'unreviewed mock release; use v0.1.110 or v0.1.111' >&2; exit 2;;
+  *) echo 'unreviewed mock release; use v0.1.110, v0.1.111 or v0.1.112' >&2; exit 2;;
 esac
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) asset=lmmock-linux-x64;; Linux-aarch64) asset=lmmock-linux-arm64;;

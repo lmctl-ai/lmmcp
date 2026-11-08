@@ -223,12 +223,18 @@ func TestRemoteRetryOnce(t *testing.T) {
 func TestRemoteChangeKeepsActiveCall(t *testing.T) {
 	g, s := remoteFixture(t, true)
 	entered := make(chan struct{})
+	releaseHold := make(chan struct{})
+	t.Cleanup(func() { close(releaseHold) })
 	events := make(chan Event, 20)
 	g.opts.Event = func(e Event) { events <- e }
 	s.AddTool(&mcp.Tool{Name: "hold", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		close(entered)
-		<-ctx.Done()
-		return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-releaseHold:
+			return nil, nil
+		}
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

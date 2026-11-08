@@ -69,7 +69,9 @@ func TestNoResendAfterWrittenRequest(t *testing.T) {
 				case m.Method == "initialize":
 					id := "S" + string(rune('0'+inits.Add(1)))
 					sessions.Store(id, true)
-					w.Header().Set("Mcp-Session-Id", id)
+					if mode != "404-after-execute" {
+						w.Header().Set("Mcp-Session-Id", id)
+					}
 					write(map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "x", "version": "1"}})
 				case m.ID == nil:
 					w.WriteHeader(202)
@@ -93,8 +95,8 @@ func TestNoResendAfterWrittenRequest(t *testing.T) {
 			if r.Status == 200 {
 				t.Fatalf("unexpected success: %s", body(r))
 			}
-			if mode == "reset-after-execute" && effects.Load() != 1 {
-				t.Fatalf("connection reset after execution: effect ran %d times", effects.Load())
+			if effects.Load() != 1 {
+				t.Fatalf("%s: effect ran %d times", mode, effects.Load())
 			}
 		})
 	}
@@ -402,7 +404,7 @@ func TestDialTimeRefusesMetadataAfterDNS(t *testing.T) {
 	defer stubDNS(t, net.ParseIP("169.254.169.254"))()
 	g, _ := New(Config{Servers: map[string]ServerConfig{"r": {URL: "https://meta.test:8443/mcp"}}}, Options{})
 	defer g.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	r := g.Dispatch(ctx, Request{Method: "GET", Path: "/v1/servers/r/tools"})
 	if !strings.Contains(body(r), "ADDRESS_REFUSED") {
@@ -482,28 +484,39 @@ func TestRoundTripSchemeUserinfoAndDefaultPort(t *testing.T) {
 	// the default port is the same origin
 	state = originState(t, "http://127.0.0.1:80")
 	req, _ = http.NewRequest("GET", "http://127.0.0.1/x", nil)
-	if _, e := state.RoundTrip(req); e != nil && strings.Contains(e.Error(), "remote origin changed") {
+	if _, e := state.RoundTrip(req); e != nil && strings.Contains(e.Error(), "REMOTE_ORIGIN_CHANGED") {
 		t.Fatal("explicit default port treated as another origin")
+	}
+	// a non-default explicit port must not match an implicit default port
+	state = originState(t, "http://127.0.0.1:8080")
+	req, _ = http.NewRequest("GET", "http://127.0.0.1/x", nil)
+	if r, e := state.RoundTrip(req); e == nil {
+		r.Body.Close()
+		t.Fatal("non-default port matched implicit default port")
 	}
 }
 
 func TestSameOriginRedirectIsRefused(t *testing.T) {
-	var followed atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/other" {
-			followed.Add(1)
-			return
+	for _, status := range []int{301, 302, 307, 308} {
+		var followed atomic.Int64
+		code := status
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/other" {
+				followed.Add(1)
+				w.WriteHeader(500)
+				return
+			}
+			http.Redirect(w, r, "/other", code)
+		}))
+		g, _ := New(Config{Servers: map[string]ServerConfig{"r": {URL: server.URL + "/mcp", ProtocolVersion: "2025-11-25"}}}, Options{})
+		if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status < 400 {
+			t.Fatalf("status %d: %v", code, r)
 		}
-		http.Redirect(w, r, "/other", 302)
-	}))
-	defer server.Close()
-	g, _ := New(Config{Servers: map[string]ServerConfig{"r": {URL: server.URL + "/mcp", ProtocolVersion: "2025-11-25"}}}, Options{})
-	defer g.Close()
-	if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status < 400 {
-		t.Fatal(r)
-	}
-	if followed.Load() != 0 {
-		t.Fatal("a same-origin redirect was followed")
+		g.Close()
+		server.Close()
+		if followed.Load() != 0 {
+			t.Fatalf("status %d: a same-origin redirect was followed", code)
+		}
 	}
 }
 

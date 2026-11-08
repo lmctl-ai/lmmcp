@@ -30,7 +30,7 @@ results=[]
 with tempfile.TemporaryDirectory(prefix='copy-',dir=e) as tmp:
  copy=pathlib.Path(tmp)
  for name in ['go.mod','go.sum']:shutil.copy2(root/name,copy/name)
- for name in ['cmd','internal']:shutil.copytree(root/name,copy/name)
+ for name in ['cmd','internal','examples']:shutil.copytree(root/name,copy/name)
  for name,file,before,after,test in mutations:
   f=copy/file;original=f.read_text();assert before in original,(name,before);f.write_text(original.replace(before,after,1))
   try:
