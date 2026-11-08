@@ -3,6 +3,9 @@ package bridge
 import (
 	"errors"
 	"net"
+	"net/netip"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -17,6 +20,64 @@ var metadataV6 = net.ParseIP("fd00:ec2::254")
 func normalizeIP(ip net.IP) net.IP {
 	if v4 := ip.To4(); v4 != nil {
 		return v4
+	}
+	return ip
+}
+
+func parseLegacyIPv4(s string) (net.IP, bool) {
+	parts := strings.Split(s, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return nil, false
+	}
+	var vals [4]uint64
+	for i, p := range parts {
+		if p == "" || p[0] < '0' || p[0] > '9' {
+			return nil, false
+		}
+		v, err := strconv.ParseUint(p, 0, 32)
+		if err != nil {
+			return nil, false
+		}
+		vals[i] = v
+	}
+	for i := 0; i < len(parts)-1; i++ {
+		if vals[i] > 0xff {
+			return nil, false
+		}
+	}
+	maxLast := (uint64(1) << (8 * uint(5-len(parts)))) - 1
+	if vals[len(parts)-1] > maxLast {
+		return nil, false
+	}
+	var packed uint32
+	for i := 0; i < len(parts)-1; i++ {
+		packed |= uint32(vals[i]) << uint(8*(3-i))
+	}
+	packed |= uint32(vals[len(parts)-1])
+	return net.IPv4(byte(packed>>24), byte(packed>>16), byte(packed>>8), byte(packed)), true
+}
+
+func parseHostIP(host string) (net.IP, bool) {
+	trimmed := strings.TrimRight(host, ".")
+	if trimmed == "" {
+		return nil, false
+	}
+	if addr, err := netip.ParseAddr(trimmed); err == nil {
+		addr = addr.WithZone("").Unmap()
+		s := addr.AsSlice()
+		return net.IP(s), true
+	}
+	if ip := net.ParseIP(trimmed); ip != nil {
+		return normalizeIP(ip), true
+	}
+	return parseLegacyIPv4(trimmed)
+}
+
+// ParseHostIP parses standard, zone-qualified IPv6, trailing-dot, and inet_aton IPv4 host literals.
+func ParseHostIP(host string) net.IP {
+	ip, ok := parseHostIP(host)
+	if !ok {
+		return nil
 	}
 	return ip
 }
@@ -43,9 +104,12 @@ func dialControl(allowPrivate, loopbackLiteral bool, refused func()) func(networ
 		if err != nil {
 			return err
 		}
-		ip := net.ParseIP(host)
-		if ip == nil {
-			return nil
+		ip, ok := parseHostIP(host)
+		if !ok {
+			if refused != nil {
+				refused()
+			}
+			return errAddressRefused
 		}
 		if forbiddenAddress(ip) || !allowPrivate && privateAddress(ip) && !(loopbackLiteral && normalizeIP(ip).IsLoopback()) {
 			if refused != nil {
