@@ -1,4 +1,4 @@
-module github.com/lmctlhq/lmmcp
+module github.com/lmctl-ai/lmmcp
 
 go 1.26
 

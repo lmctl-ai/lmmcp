@@ -106,3 +106,5 @@ cancellation, progress, expiry, auth and changes. Test assertions, mutations,
 race/vet, five cross-builds and actual lmscript execution gate this slice locally.
 No workflows, public counterpart or release pipeline here. Native platform
 qualification and public packaging come next; operator wires real MCP servers.
+
+Canonical Go module: `github.com/lmctl-ai/lmmcp`.

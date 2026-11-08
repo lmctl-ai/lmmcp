@@ -1,5 +1,7 @@
 # lmmcp
 
+Go module: `github.com/lmctl-ai/lmmcp`.
+
 One Go binary exposes configured MCP servers through REST, a CLI and JSON-lines
 REST over stdio. It supports stdio, Streamable HTTP and legacy HTTP+SSE MCP.
 Development and tests use loopback mocks only; the operator configures real servers.

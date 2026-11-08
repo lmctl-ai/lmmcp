@@ -2,7 +2,7 @@ package bridge
 
 import "encoding/json"
 
-const spec = `{"openapi":"3.1.0","info":{"title":"lmmcp slice 1","version":"0.1.0"},"security":[{"bearerAuth":[]}],"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer"}},"schemas":{"Envelope":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},"data":{},"error":{"type":"object","required":["code","message"],"properties":{"code":{"type":"string"},"message":{"type":"string"},"mcpCode":{"type":"integer","description":"JSON-RPC error code answered by the MCP server, when the error came from it"}}}}}}},"x-next-iteration":["public packaging","native platform qualification"],"paths":{}}`
+const spec = `{"openapi":"3.1.0","info":{"title":"lmmcp","x-go-module":"github.com/lmctl-ai/lmmcp","version":"0.1.0"},"security":[{"bearerAuth":[]}],"components":{"securitySchemes":{"bearerAuth":{"type":"http","scheme":"bearer"}},"schemas":{"Envelope":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"},"data":{},"error":{"type":"object","required":["code","message"],"properties":{"code":{"type":"string"},"message":{"type":"string"},"mcpCode":{"type":"integer","description":"JSON-RPC error code answered by the MCP server, when the error came from it"}}}}}}},"x-next-iteration":["public packaging","native platform qualification"],"paths":{}}`
 
 func OpenAPI() map[string]any {
 	var doc map[string]any

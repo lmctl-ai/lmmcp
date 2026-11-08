@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	lmcode "github.com/lmctl-ai/lmcode-go"
-	"github.com/lmctlhq/lmmcp/internal/bridge"
+	"github.com/lmctl-ai/lmmcp/internal/bridge"
 	"io"
 	"net/url"
 	"os"

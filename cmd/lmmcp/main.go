@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lmctlhq/lmmcp/internal/bridge"
+	"github.com/lmctl-ai/lmmcp/internal/bridge"
 	"io"
 	"net"
 	"net/http"

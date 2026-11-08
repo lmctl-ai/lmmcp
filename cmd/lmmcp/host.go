@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"github.com/lmctlhq/lmmcp/internal/bridge"
-	"github.com/lmctlhq/lmmcp/internal/host"
+	"github.com/lmctl-ai/lmmcp/internal/bridge"
+	"github.com/lmctl-ai/lmmcp/internal/host"
 	"io"
 	"os"
 	"strings"

@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/lmctlhq/lmmcp/internal/bridge"
+	"github.com/lmctl-ai/lmmcp/internal/bridge"
 	"net/http"
 	"net/http/httptest"
 	"os"
