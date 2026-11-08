@@ -69,16 +69,17 @@ func runHost(ctx context.Context, args []string, out io.Writer) int {
 	}
 	raw, e := os.ReadFile(config)
 	if e != nil {
-		return emit(out, 2, "CONFIG_UNREADABLE")
+		return host.Fail(out, "CONFIG_UNREADABLE")
 	}
 	cfg, e := bridge.Load(raw)
 	if e != nil {
-		return emit(out, 2, "INVALID_CONFIG")
+		return host.Fail(out, configCode(e))
 	}
 	g, e := bridge.New(cfg, bridge.Options{})
 	if e != nil {
-		return emit(out, 2, "INVALID_CONFIG")
+		return host.Fail(out, "INVALID_CONFIG")
 	}
 	defer g.Close()
+	defer abortOnSecondSignal(ctx, g)()
 	return host.Run(files, ctx, g, out)
 }

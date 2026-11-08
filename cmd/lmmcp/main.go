@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/lmctlhq/lmmcp/internal/bridge"
 	"io"
@@ -114,6 +115,38 @@ func parse(args []string) (options, error) {
 }
 func writeJSON(w io.Writer, v any) bool {
 	return json.NewEncoder(w).Encode(v) == nil
+}
+
+// configCode keeps the specific configuration error (HEADER_REFERENCE_REQUIRED, INVALID_REMOTE_URL, ...) instead of a
+// generic one; it never carries file contents.
+func configCode(e error) string {
+	var be *bridge.Error
+	if errors.As(e, &be) && be.Code != "" {
+		return be.Code
+	}
+	return "INVALID_CONFIG"
+}
+
+// abortOnSecondSignal releases session teardown requests that wait on an unresponsive server when the operator
+// repeats the shutdown signal. The first signal starts an orderly shutdown; no timer is involved.
+func abortOnSecondSignal(ctx context.Context, g *bridge.Gateway) func() {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-done:
+			return
+		}
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer signal.Stop(sig)
+		select {
+		case <-sig:
+			g.Abort()
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
 }
 func emit(w io.Writer, status int, code string) int {
 	if !writeJSON(w, map[string]any{"ok": false, "error": map[string]string{"code": code, "message": strings.ToLower(strings.ReplaceAll(code, "_", " "))}}) {
@@ -233,7 +266,7 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 		return bridge.Response{}, fmt.Errorf("url")
 	}
 	ip := net.ParseIP(u.Hostname())
-	if u.Scheme != "https" && (u.Scheme != "http" || ip == nil || !ip.IsLoopback()) {
+	if u.Scheme != "https" && (u.Scheme != "http" || ip == nil || !ip.IsLoopback()) || ip != nil && bridge.ForbiddenAddress(ip) {
 		return bridge.Response{}, fmt.Errorf("url")
 	}
 	token, e := auth(o)
@@ -256,7 +289,7 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("redirect refused") }}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: bridge.SafeDialer().DialContext}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("redirect refused") }}
 	res, e := client.Do(req)
 	if e != nil {
 		return bridge.Response{}, e
@@ -342,7 +375,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 	}
 	cfg, e := bridge.Load(raw)
 	if e != nil {
-		return emit(out, 2, "INVALID_CONFIG")
+		return emit(out, 2, configCode(e))
 	}
 	var logMu sync.Mutex
 	g, e := bridge.New(cfg, bridge.Options{ReadOnly: o.readonly, Event: func(event bridge.Event) { logMu.Lock(); defer logMu.Unlock(); json.NewEncoder(errout).Encode(event) }})
@@ -350,6 +383,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 		return emit(out, 2, "INVALID_CONFIG")
 	}
 	defer g.Close()
+	defer abortOnSecondSignal(ctx, g)()
 	switch o.command {
 	case "stdio":
 		if o.tokenFile != "" || o.tokenEnv != "" {

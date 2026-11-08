@@ -160,6 +160,11 @@ func Run(files []string, ctx context.Context, g *bridge.Gateway, out io.Writer) 
 	}
 	return results.WriteFrame(out)
 }
+
+// Fail reports a failure before any program ran as a terminal frame with exit 2.
+func Fail(out io.Writer, code string) int {
+	return lmcode.FailureFrame(out, "cli", lmcode.NewError(lmcode.CLI_USAGE, code))
+}
 func Signatures(ctx context.Context) string {
 	return strings.Join(Registry(ctx, nil).Signatures(), "\n") + "\n"
 }
