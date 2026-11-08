@@ -60,6 +60,7 @@ type Options struct {
 	Event    func(Event)
 }
 type entry struct {
+	changed atomic.Bool
 	gate    chan struct{}
 	session *mcp.ClientSession
 	process *child
@@ -194,12 +195,24 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	case <-e.gate:
 	}
 	defer func() { e.gate <- struct{}{} }()
+	if e.session != nil && e.changed.Swap(false) {
+		if e.remote != nil {
+			e.remote.cancel()
+			e.remote.base.CloseIdleConnections()
+			e.remote = nil
+		}
+		_ = e.session.Close()
+		e.session = nil
+		if e.process != nil {
+			e.process.Close()
+		}
+	}
 	if e.session != nil {
 		return e, nil
 	}
 	client := g.client(name)
 	if c.URL != "" {
-		session, state, err := g.connectRemote(ctx, client, c)
+		session, state, err := g.connectRemote(ctx, client, c, name)
 		if err != nil {
 			return nil, err
 		}
@@ -270,6 +283,7 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 
 func (g *Gateway) client(name string) *mcp.Client {
 	return mcp.NewClient(&mcp.Implementation{Name: "lmmcp", Version: "0.1.0"}, &mcp.ClientOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true}, ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) {
+		g.markChanged(name)
 		event := Event{Kind: "list_changed", Server: name}
 		if g.Safe(success(event)).Status == 200 {
 			g.opts.Event(event)
@@ -436,3 +450,11 @@ func errorResponse(ctx context.Context, e error) Response {
 	return failure(502, e.Error())
 }
 func (g *Gateway) requestID() string { return strconv.FormatUint(g.ids.Add(1), 10) }
+
+func (g *Gateway) markChanged(name string) {
+	g.mu.Lock()
+	if e := g.entries[name]; e != nil {
+		e.changed.Store(true)
+	}
+	g.mu.Unlock()
+}

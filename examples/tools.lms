@@ -1,0 +1,10 @@
+# PATH must contain lmmcp; ARGV[0] names its MCP configuration.
+p = _lmcode_ schema="schema.json";
+let server = mcp_server("fixture");
+let tools = server.tools();
+let reply = server.call("echo", json_parse("{\"text\":\"hello from lmcode\"}"));
+$return = reply;
+end _lmcode_
+r = run_lmcode(p, {command:["lmmcp", "--config", ARGV[0], "--lmcode", "$DSLFILE"]});
+require(r.ok, "MCP host failed");
+print(r.result);

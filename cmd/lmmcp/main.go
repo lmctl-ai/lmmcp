@@ -238,6 +238,9 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 	return bridge.Protect(bridge.Response{Status: res.StatusCode, Body: data}, []string{token}), nil
 }
 func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer) int {
+	if hostMode(args) {
+		return runHost(ctx, args, out)
+	}
 	if len(args) == 1 && args[0] == "--version" {
 		json.NewEncoder(out).Encode(map[string]string{"name": "lmmcp", "version": "0.1.0"})
 		return 0

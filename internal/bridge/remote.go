@@ -141,7 +141,7 @@ type remoteBody struct {
 }
 
 func (b *remoteBody) Close() error { e := b.ReadCloser.Close(); b.stop(); return e }
-func (g *Gateway) connectRemote(ctx context.Context, client *mcp.Client, c ServerConfig) (*mcp.ClientSession, *remoteState, error) {
+func (g *Gateway) connectRemote(ctx context.Context, client *mcp.Client, c ServerConfig, name string) (*mcp.ClientSession, *remoteState, error) {
 	u, err := networkURL(c.URL)
 	if err != nil {
 		return nil, nil, err
@@ -173,7 +173,7 @@ func (g *Gateway) connectRemote(ctx context.Context, client *mcp.Client, c Serve
 	}
 	var transport mcp.Transport
 	makeStream := func() mcp.Transport {
-		return &mcp.StreamableClientTransport{Endpoint: c.URL, HTTPClient: hc, MaxRetries: -1, MaxEventSize: -1}
+		return &mcp.StreamableClientTransport{Endpoint: c.URL, HTTPClient: hc, MaxRetries: -1, MaxEventSize: -1, DisableStandaloneSSE: version == "2025-11-25"}
 	}
 	if kind == "sse" {
 		transport = &mcp.SSEClientTransport{Endpoint: c.URL, HTTPClient: hc, MaxEventSize: -1}
@@ -192,6 +192,9 @@ func (g *Gateway) connectRemote(ctx context.Context, client *mcp.Client, c Serve
 		cancel()
 		r.base.CloseIdleConnections()
 		return nil, nil, remoteError(r, err)
+	}
+	if version == "2025-11-25" && kind != "sse" && session.ID() != "" {
+		go g.watchChanges(r, hc, c.URL, session.ID(), name)
 	}
 	return session, r, nil
 }
