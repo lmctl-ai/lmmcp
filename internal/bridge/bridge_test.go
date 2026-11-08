@@ -363,7 +363,7 @@ func TestAPIContractEdges(t *testing.T) {
 			t.Fatal(out)
 		}
 	}
-	if r := request(g, "GET", "/v1/servers/mock/resources", ""); r.Status != 501 {
+	if r := request(g, "GET", "/v1/servers/mock/resources", ""); r.Status != 200 {
 		t.Fatal(r)
 	}
 	if r := request(g, "POST", "/v1/servers/mock/tools/absent/call", `{}`); r.Status != 404 {
@@ -428,12 +428,12 @@ func TestOwnedShutdownWait(t *testing.T) {
 		t.Fatal("owned child not reaped")
 	}
 }
-func TestRemoteDoesNotConnect(t *testing.T) {
+func TestMissingRemoteCredentialDoesNotConnect(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("remote transport executed in slice 1") }))
 	defer srv.Close()
-	g, _ := New(Config{Servers: map[string]ServerConfig{"remote": {URL: srv.URL, Headers: map[string]string{"Authorization": "${NOT_READ}"}}}}, Options{Lookup: func(string) (string, bool) { t.Error("remote credential read"); return "", false }})
+	g, _ := New(Config{Servers: map[string]ServerConfig{"remote": {URL: srv.URL, Headers: map[string]string{"Authorization": "${NOT_READ}"}}}}, Options{Lookup: func(string) (string, bool) { return "", false }})
 	defer g.Close()
-	if r := request(g, "GET", "/v1/servers/remote/tools", ""); r.Status != 501 {
+	if r := request(g, "GET", "/v1/servers/remote/tools", ""); r.Status != 502 {
 		t.Fatal(r)
 	}
 }
@@ -441,7 +441,7 @@ func TestToolErrorCode(t *testing.T) {
 	g, _ := fixture(t, false)
 	r := request(g, "POST", "/v1/servers/mock/tools/error/call", `{}`)
 	b, _ := json.Marshal(r.Body)
-	if !strings.Contains(string(b), `"code":"TOOL_ERROR"`) {
+	if !strings.Contains(string(b), `"code":"SECRET_OUTPUT"`) {
 		t.Fatal(string(b))
 	}
 }

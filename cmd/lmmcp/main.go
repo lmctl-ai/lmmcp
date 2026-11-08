@@ -139,17 +139,31 @@ func request(o options) (bridge.Request, error) {
 			return r, fmt.Errorf("usage")
 		}
 		r.Path = "/v1/servers"
-	case "tools":
+	case "tools", "resources", "templates", "prompts":
 		if len(o.positionals) != 1 {
 			return r, fmt.Errorf("usage")
 		}
-		r.Path = "/v1/servers/" + esc(o.positionals[0]) + "/tools"
-	case "call":
+		kind := o.command
+		if kind == "templates" {
+			kind = "resources/templates"
+		}
+		r.Path = "/v1/servers/" + esc(o.positionals[0]) + "/" + kind
+	case "read":
+		if len(o.positionals) != 2 {
+			return r, fmt.Errorf("usage")
+		}
+		r.Path = "/v1/servers/" + esc(o.positionals[0]) + "/resources/read"
+		r.Query = map[string]string{"uri": o.positionals[1]}
+	case "call", "prompt":
 		if len(o.positionals) != 2 {
 			return r, fmt.Errorf("usage")
 		}
 		r.Method = "POST"
-		r.Path = "/v1/servers/" + esc(o.positionals[0]) + "/tools/" + esc(o.positionals[1]) + "/call"
+		if o.command == "call" {
+			r.Path = "/v1/servers/" + esc(o.positionals[0]) + "/tools/" + esc(o.positionals[1]) + "/call"
+		} else {
+			r.Path = "/v1/servers/" + esc(o.positionals[0]) + "/prompts/" + esc(o.positionals[1])
+		}
 		if o.json != "" {
 			r.Body = json.RawMessage(o.json)
 		} else {
@@ -181,7 +195,15 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 	if e != nil {
 		return bridge.Response{}, fmt.Errorf("auth")
 	}
-	req, e := http.NewRequestWithContext(ctx, r.Method, strings.TrimSuffix(o.url, "/")+r.Path, strings.NewReader(string(r.Body)))
+	endpoint := strings.TrimSuffix(o.url, "/") + r.Path
+	if len(r.Query) > 0 {
+		q := url.Values{}
+		for k, v := range r.Query {
+			q.Set(k, v)
+		}
+		endpoint += "?" + q.Encode()
+	}
+	req, e := http.NewRequestWithContext(ctx, r.Method, endpoint, strings.NewReader(string(r.Body)))
 	if e != nil {
 		return bridge.Response{}, e
 	}
@@ -210,7 +232,7 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 		return bridge.Response{}, fmt.Errorf("response")
 	}
 	ok, valid := m["ok"].(bool)
-	if !valid || ok != (res.StatusCode < 400) {
+	if !valid || ok != (res.StatusCode < 400) && !(res.StatusCode == 200 && !ok && toolFailure(m)) {
 		return bridge.Response{}, fmt.Errorf("response")
 	}
 	return bridge.Protect(bridge.Response{Status: res.StatusCode, Body: data}, []string{token}), nil
@@ -316,4 +338,13 @@ func main() {
 	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
+}
+
+func toolFailure(m map[string]any) bool {
+	e, ok := m["error"].(map[string]any)
+	if !ok || e["code"] != "TOOL_ERROR" {
+		return false
+	}
+	d, ok := m["data"].(map[string]any)
+	return ok && d["isError"] == true
 }

@@ -84,8 +84,36 @@ func (g *Gateway) Dispatch(ctx context.Context, r Request) Response {
 	if len(p) < 4 || p[0] != "v1" || p[1] != "servers" {
 		return failure(404, "NOT_FOUND")
 	}
-	if p[3] == "resources" || p[3] == "prompts" {
-		return failure(501, "NOT_IMPLEMENTED")
+	if p[3] == "resources" {
+		if r.Method != "GET" {
+			return failure(405, "METHOD_NOT_ALLOWED")
+		}
+		if len(p) == 4 {
+			return g.catalog(ctx, p[2], "resources")
+		}
+		if len(p) == 5 && p[4] == "templates" {
+			return g.catalog(ctx, p[2], "templates")
+		}
+		if len(p) == 5 && p[4] == "read" {
+			if len(r.Query) != 1 {
+				return failure(400, "INVALID_QUERY")
+			}
+			return g.read(ctx, p[2], r.Query["uri"])
+		}
+		return failure(404, "NOT_FOUND")
+	}
+	if p[3] == "prompts" {
+		if len(p) == 4 && r.Method == "GET" {
+			return g.catalog(ctx, p[2], "prompts")
+		}
+		if len(p) == 5 && r.Method == "POST" {
+			var args map[string]string
+			if Decode(r.Body, &args) != nil || args == nil {
+				return failure(400, "INVALID_ARGUMENTS")
+			}
+			return g.prompt(ctx, p[2], p[4], args)
+		}
+		return failure(405, "METHOD_NOT_ALLOWED")
 	}
 	if p[3] != "tools" {
 		return failure(404, "NOT_FOUND")
@@ -154,6 +182,9 @@ func (g *Gateway) Handler(token, host string) http.Handler {
 }
 func Exit(r Response) int {
 	if r.Status < 400 {
+		if m, ok := r.Body.(map[string]any); ok && m["ok"] == false {
+			return 3
+		}
 		return 0
 	}
 	if r.Status == 499 {

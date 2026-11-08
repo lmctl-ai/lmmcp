@@ -13,11 +13,11 @@ mutations=[
 ('json-duplicate','internal/bridge/json.go','!ok || f.seen[k]','!ok','TestConfig'),
 ('argument-shape','internal/bridge/api.go','Decode(r.Body, &args) != nil || args == nil','false','TestErrorsAndSecret'),
 ('env-default','internal/bridge/gateway.go','inherited = []string{"PATH"}','inherited = []string{"PATH","UNDECLARED"}','TestOnlyDeclaredEnvIsRead'),
-('tool-error','internal/bridge/gateway.go','if res.IsError {','if false {','TestToolErrorCode'),
+('tool-error','internal/bridge/gateway.go','if res.IsError {','if false {','TestRemoteSurfaces'),
 ('secret-output','internal/bridge/gateway.go','if contains(data) {','if false {','TestErrorsAndSecret'),
 ('child-wait','internal/bridge/gateway.go','_ = c.command.Wait()','_ = error(nil)','TestOwnedShutdownWait'),
 ('unknown-tool','internal/bridge/gateway.go','if selected == nil {','if true {','TestLazyDiscoveryCall'),
-('remote-disable','internal/bridge/gateway.go','if c.URL != "" {','if false {','TestRemoteDoesNotConnect'),
+
 ('missing-env','internal/bridge/config.go','if !ok {','if !ok && ok {','TestMissingEnvNoChild'),
 ('config-unknown','internal/bridge/json.go','d.DisallowUnknownFields()','// deliberately removed','TestConfig'),
 ('error-exit','internal/bridge/api.go','return 3','return 0','TestAPIContractEdges'),

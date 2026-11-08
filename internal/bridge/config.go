@@ -9,19 +9,21 @@ type Config struct {
 	Servers map[string]ServerConfig `json:"mcpServers"`
 }
 type ServerConfig struct {
-	Command      string            `json:"command,omitempty"`
-	Args         []string          `json:"args,omitempty"`
-	Env          map[string]string `json:"env,omitempty"`
-	EnvAllowlist []string          `json:"envAllowlist,omitempty"`
-	Cwd          string            `json:"cwd,omitempty"`
-	URL          string            `json:"url,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	Type         string            `json:"type,omitempty"`
-	Name         string            `json:"name,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	Disabled     bool              `json:"disabled,omitempty"`
-	AllowTools   []string          `json:"allowTools,omitempty"`
-	DenyTools    []string          `json:"denyTools,omitempty"`
+	Command         string            `json:"command,omitempty"`
+	Args            []string          `json:"args,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	EnvAllowlist    []string          `json:"envAllowlist,omitempty"`
+	Cwd             string            `json:"cwd,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
+	Transport       string            `json:"transport,omitempty"`
+	ProtocolVersion string            `json:"protocolVersion,omitempty"`
+	Type            string            `json:"type,omitempty"`
+	Name            string            `json:"name,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Disabled        bool              `json:"disabled,omitempty"`
+	AllowTools      []string          `json:"allowTools,omitempty"`
+	DenyTools       []string          `json:"denyTools,omitempty"`
 }
 
 func envName(s string) bool {
@@ -83,6 +85,9 @@ func Load(data []byte) (Config, error) {
 		}
 		if strings.ContainsRune(c.Command, 0) || strings.ContainsRune(c.Cwd, 0) {
 			return cfg, bad("INVALID_CONFIG")
+		}
+		if err := validateRemote(c); err != nil {
+			return cfg, err
 		}
 		for _, a := range c.Args {
 			if strings.ContainsRune(a, 0) {

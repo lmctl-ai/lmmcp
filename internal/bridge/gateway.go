@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"io"
 	"log/slog"
@@ -62,6 +63,7 @@ type entry struct {
 	gate    chan struct{}
 	session *mcp.ClientSession
 	process *child
+	remote  *remoteState
 }
 type child struct {
 	command *exec.Cmd
@@ -173,9 +175,7 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	if c.Disabled {
 		return nil, bad("SERVER_DISABLED")
 	}
-	if c.URL != "" {
-		return nil, bad("UNSUPPORTED_TRANSPORT")
-	}
+
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
@@ -195,6 +195,16 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	}
 	defer func() { e.gate <- struct{}{} }()
 	if e.session != nil {
+		return e, nil
+	}
+	client := g.client(name)
+	if c.URL != "" {
+		session, state, err := g.connectRemote(ctx, client, c)
+		if err != nil {
+			return nil, err
+		}
+		e.session = session
+		e.remote = state
 		return e, nil
 	}
 	env := []string{}
@@ -248,12 +258,7 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	owned := &child{command: cmd, reader: stdout, writer: stdin}
 	e.process = owned
 	g.opts.Event(Event{Kind: "started", Server: name})
-	client := mcp.NewClient(&mcp.Implementation{Name: "lmmcp", Version: "0.1.0"}, &mcp.ClientOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true}, ProgressNotificationHandler: func(_ context.Context, r *mcp.ProgressNotificationClientRequest) {
-		event := Event{Kind: "progress", Server: name, ID: fmt.Sprint(r.Params.ProgressToken), Progress: r.Params.Progress, Total: r.Params.Total}
-		if g.Safe(success(event)).Status == 200 {
-			g.opts.Event(event)
-		}
-	}})
+
 	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: owned, Writer: stdin, MaxLineLength: -1}, nil)
 	if err != nil {
 		owned.Close()
@@ -262,8 +267,26 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	e.session = session
 	return e, nil
 }
+
+func (g *Gateway) client(name string) *mcp.Client {
+	return mcp.NewClient(&mcp.Implementation{Name: "lmmcp", Version: "0.1.0"}, &mcp.ClientOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true}, ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) {
+		event := Event{Kind: "list_changed", Server: name}
+		if g.Safe(success(event)).Status == 200 {
+			g.opts.Event(event)
+		}
+	}, ProgressNotificationHandler: func(_ context.Context, r *mcp.ProgressNotificationClientRequest) {
+		event := Event{Kind: "progress", Server: name, ID: fmt.Sprint(r.Params.ProgressToken), Progress: r.Params.Progress, Total: r.Params.Total}
+		if g.Safe(success(event)).Status == 200 {
+			g.opts.Event(event)
+		}
+	}})
+}
 func (g *Gateway) invalidate(e *entry) {
 	<-e.gate
+	if e.remote != nil {
+		e.remote.cancel()
+		e.remote = nil
+	}
 	if e.session != nil {
 		_ = e.session.Close()
 		e.session = nil
@@ -305,12 +328,11 @@ func (g *Gateway) tools(ctx context.Context, name string) ([]*mcp.Tool, *entry, 
 	cursor := ""
 	seen := map[string]bool{}
 	for {
-		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+		res, err := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.ListToolsResult, error) {
+			return s.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+		})
 		if err != nil {
-			if ctx.Err() == nil {
-				g.invalidate(e)
-			}
-			return nil, nil, bad("UPSTREAM_FAILED")
+			return nil, nil, err
 		}
 		tools = append(tools, res.Tools...)
 		if res.NextCursor == "" {
@@ -335,7 +357,7 @@ func (g *Gateway) servers() any {
 		c := g.cfg.Servers[n]
 		transport := "stdio"
 		if c.URL != "" {
-			transport = "remote-unsupported"
+			transport = remoteKind(c)
 		}
 		out = append(out, map[string]any{"name": n, "transport": transport, "disabled": c.Disabled})
 	}
@@ -374,16 +396,17 @@ func (g *Gateway) invoke(ctx context.Context, name, tool string, args map[string
 	}
 	params := &mcp.CallToolParams{Name: tool, Arguments: args}
 	params.SetProgressToken(id)
-	res, err := session.CallTool(ctx, params)
+	res, err := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.CallToolResult, error) { return s.CallTool(ctx, params) })
 	if err != nil {
 		if ctx.Err() != nil {
 			return failure(499, "CANCELLED")
 		}
-		g.invalidate(e)
-		return failure(502, "UPSTREAM_FAILED")
+		return errorResponse(ctx, err)
 	}
 	if res.IsError {
-		return failure(502, "TOOL_ERROR")
+		r := failure(200, "TOOL_ERROR")
+		r.Body.(map[string]any)["data"] = res
+		return g.Safe(r)
 	}
 	if res.NeedsInput() {
 		return failure(502, "INPUT_REQUIRED")
