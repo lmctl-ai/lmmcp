@@ -12,6 +12,7 @@ mutations=[
 ('origin-hop','internal/bridge/remote.go','req.URL.Scheme != r.origin.Scheme || !strings.EqualFold(req.URL.Host, r.origin.Host)','false','TestRemoteOriginHop'),
 ('retry-once-bound','internal/bridge/remote.go','attempt < 2','attempt < 1','TestRemoteRetryOnce'),
 ('session-retry','internal/bridge/remote.go','if !expired {','if !expired || expired {','TestRemoteRetryOnce'),
+('active-generation','internal/bridge/gateway.go','e.active == 0 && e.changed.Swap(false)','e.changed.Swap(false)','TestRemoteChangeKeepsActiveCall'),
 ('list-refresh','internal/bridge/gateway.go','e.changed.Swap(false)','false','TestReleasedCancelAndChanged'),
 ('resource-route','internal/bridge/api.go','return g.catalog(ctx, p[2], "resources")','return failure(501,"NOT_IMPLEMENTED")','TestRemoteSurfaces'),
 ('template-route','internal/bridge/api.go','return g.catalog(ctx, p[2], "templates")','return failure(501,"NOT_IMPLEMENTED")','TestRemoteSurfaces'),
@@ -22,6 +23,7 @@ mutations=[
 ('tool-cli-exit','internal/bridge/api.go','m["ok"] == false','m["ok"] == true','TestRemoteSurfaces'),
 ('host-dry','internal/host/host.go','vmctx.SetDry(results.Dry())','vmctx.SetDry(false)','TestDryProgramAndResultSink'),
 ('null-receiver','internal/host/host.go','return lmcode.None(), lmcode.NewHostError("null_receiver")','return jsonValue(map[string]any{})','TestDryRegistryNoEffects'),
+('builder-preload','internal/host/host.go','programs[index] = p','programs[index] = p; if !results.Dry() && g!=nil {g.Dispatch(ctx,bridge.Request{Method:"GET",Path:"/v1/servers/fixture/tools"})}','TestBuilderPreloadAndOrder'),
 ('manifest-before-dispatch','internal/host/host.go','return lmcode.FailureFrame(out, "cli", err)','return 0','TestManifestBeforeDispatch'),
 ]
 results=[]

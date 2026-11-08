@@ -222,11 +222,18 @@ func operation[T any](g *Gateway, ctx context.Context, name string, fn func(*mcp
 		}
 		<-e.gate
 		s, r := e.session, e.remote
+		e.active++
 		e.gate <- struct{}{}
 		if s == nil {
+			<-e.gate
+			e.active--
+			e.gate <- struct{}{}
 			return zero, bad("UPSTREAM_FAILED")
 		}
 		value, err := fn(s)
+		<-e.gate
+		e.active--
+		e.gate <- struct{}{}
 		if err == nil {
 			return value, nil
 		}

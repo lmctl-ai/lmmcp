@@ -51,7 +51,7 @@ reconnect delays are disabled and event ceilings explicitly -1. Auto alone tries
 POST initialize then /sse on 4xx, excluding 401/403 (authentication is not discovery).
 A session-bearing POST 404 permits one re-initialization and retry; unrelated errors
 never replay calls. List changes discard the session and its SDK caches before
-next use. The 2025 optional GET notification stream is read asynchronously so a
+next idle use; active calls finish before a generation is rotated. The 2025 optional GET notification stream is read asynchronously so a
 peer that delays SSE headers cannot block initialization. No retry sleeps, call
 deadlines, output quotas or truncation. Teardown requests use our lifetime context,
 not the SDK's fixed DELETE deadline; cancellation ends owned reads/connections.

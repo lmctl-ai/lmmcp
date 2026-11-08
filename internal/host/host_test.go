@@ -37,7 +37,7 @@ func TestDryRegistryNoEffects(t *testing.T) {
 		t.Fatal(v, e)
 	}
 	m := r.MethodBySignature("method MCPServer.tools() -> Json")
-	if _, e := m.Fn(nil, nil); e == nil {
+	if _, e := m.Fn((*serverRef)(nil), nil); e == nil {
 		t.Fatal("null receiver")
 	}
 }
@@ -70,11 +70,11 @@ func TestBuilderPreloadAndOrder(t *testing.T) {
 	file, _ := filepath.Abs("testdata/tools.lmcodeb")
 	bad := filepath.Join(t.TempDir(), "bad")
 	os.WriteFile(bad, []byte("invalid"), 0600)
-	g, _ := bridge.New(bridge.Config{Servers: map[string]bridge.ServerConfig{"fixture": {Command: "must-not-start"}}}, bridge.Options{})
+	g, _ := bridge.New(bridge.Config{Servers: map[string]bridge.ServerConfig{"fixture": {Command: "must-not-start"}}}, bridge.Options{Lookup: func(string) (string, bool) { t.Error("activation before builder preload finished"); return "", false }})
 	defer g.Close()
 	invocation(t, false, []map[string]any{{"index": 0, "file": file}, {"index": 1, "file": bad}})
 	var out bytes.Buffer
-	if code := Run([]string{bad, file}, context.Background(), g, &out); code != 3 || g.StartCount() != 0 {
+	if code := Run([]string{file, bad}, context.Background(), g, &out); code != 3 || g.StartCount() != 0 {
 		t.Fatal(code, out.String())
 	}
 	copyFile := filepath.Join(t.TempDir(), "second.lmcode")

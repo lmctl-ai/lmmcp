@@ -61,6 +61,7 @@ type Options struct {
 }
 type entry struct {
 	changed atomic.Bool
+	active  int
 	gate    chan struct{}
 	session *mcp.ClientSession
 	process *child
@@ -195,7 +196,7 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	case <-e.gate:
 	}
 	defer func() { e.gate <- struct{}{} }()
-	if e.session != nil && e.changed.Swap(false) {
+	if e.session != nil && e.active == 0 && e.changed.Swap(false) {
 		if e.remote != nil {
 			e.remote.cancel()
 			e.remote.base.CloseIdleConnections()

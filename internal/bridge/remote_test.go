@@ -219,3 +219,44 @@ func TestRemoteRetryOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteChangeKeepsActiveCall(t *testing.T) {
+	g, s := remoteFixture(t, true)
+	entered := make(chan struct{})
+	events := make(chan Event, 20)
+	g.opts.Event = func(e Event) { events <- e }
+	s.AddTool(&mcp.Tool{Name: "hold", InputSchema: map[string]any{"type": "object"}}, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan Response, 1)
+	go func() {
+		done <- g.Dispatch(ctx, Request{Method: "POST", Path: "/v1/servers/remote/tools/hold/call", Body: json.RawMessage(`{}`)})
+	}()
+	<-entered
+	previous := g.entries["remote"].session
+	s.AddTool(&mcp.Tool{Name: "new", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+	for e := range events {
+		if e.Kind == "list_changed" {
+			break
+		}
+	}
+	r := request(g, "GET", "/v1/servers/remote/tools", "")
+	if r.Status != 200 || g.entries["remote"].session != previous {
+		t.Fatal("list refresh interrupted an active generation", r)
+	}
+	select {
+	case x := <-done:
+		t.Fatal("active call ended on list change", x)
+	default:
+	}
+	cancel()
+	if x := <-done; x.Status != 499 {
+		t.Fatal(x)
+	}
+}

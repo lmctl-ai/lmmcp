@@ -148,6 +148,22 @@ func TestReleasedCancelAndChanged(t *testing.T) {
 			if r := <-done; r.Status != 499 {
 				t.Fatal(r)
 			}
+			for {
+				stateResponse, e := http.Get(base + "/__mock/state")
+				if e != nil {
+					t.Fatal(e)
+				}
+				var state map[string]any
+				e = json.NewDecoder(stateResponse.Body).Decode(&state)
+				stateResponse.Body.Close()
+				if e != nil {
+					t.Fatal(e)
+				}
+				if n, ok := state["cancelledSlow"].(float64); ok && n >= 1 {
+					break
+				}
+			}
+
 			if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status != 200 {
 				t.Fatal(r)
 			}

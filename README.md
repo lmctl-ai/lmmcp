@@ -68,7 +68,8 @@ Use `X-Request-ID` to name an HTTP request; DELETE `/v1/requests/{id}` cancels i
 HTTP disconnect and Ctrl-C propagate MCP cancellation. Session-bearing POST 404
 allows one re-initialization retry; a second expiry is `SESSION_EXPIRED`, failed
 re-initialization is `SESSION_REINITIALIZE_FAILED`. Other errors do not replay calls.
-List changes refresh the session/SDK caches before next use. An optional 2025 GET
+List changes refresh the session/SDK caches before next idle use; active calls
+finish before a session is rotated. An optional 2025 GET
 notification stream never blocks initialization waiting for its first event.
 
 ## JSON-lines REST and lmcode
