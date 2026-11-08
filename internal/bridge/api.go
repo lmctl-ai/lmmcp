@@ -172,18 +172,17 @@ func (g *Gateway) Dispatch(ctx context.Context, r Request) Response {
 			if r.Method != "POST" {
 				return methodNotAllowed("POST")
 			}
-			var args map[string]string
-			if Decode(r.Body, &args) != nil || args == nil {
+			var raw map[string]json.RawMessage // every value must be a JSON string: null and other types are refused
+			if Decode(r.Body, &raw) != nil || raw == nil {
 				return failure(400, "INVALID_ARGUMENTS")
 			}
-			var raw map[string]json.RawMessage // a JSON null would decode as "" above; prompt arguments are strings
-			if Decode(r.Body, &raw) != nil {
-				return failure(400, "INVALID_ARGUMENTS")
-			}
-			for _, v := range raw {
-				if string(v) == "null" {
+			args := make(map[string]string, len(raw))
+			for k, v := range raw {
+				var text string
+				if len(v) == 0 || v[0] != '"' || json.Unmarshal(v, &text) != nil {
 					return failure(400, "INVALID_ARGUMENTS")
 				}
+				args[k] = text
 			}
 			return g.prompt(ctx, p[2], p[4], args)
 		}

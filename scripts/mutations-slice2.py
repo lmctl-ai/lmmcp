@@ -16,7 +16,7 @@ mutations=[
 ('list-refresh','internal/bridge/gateway.go','e.changed.Swap(false)','false','TestReleasedCancelAndChanged'),
 ('resource-route','internal/bridge/api.go','return g.catalog(ctx, p[2], "resources")','return failure(501,"NOT_IMPLEMENTED")','TestRemoteSurfaces'),
 ('template-route','internal/bridge/api.go','return g.catalog(ctx, p[2], "templates")','return failure(501,"NOT_IMPLEMENTED")','TestRemoteSurfaces'),
-('prompt-object','internal/bridge/api.go','var args map[string]string\n\t\t\tif Decode(r.Body, &args) != nil || args == nil {','var args map[string]string\n\t\t\tif false {','TestCatalogInvalidArguments|TestPromptArgumentsMustBeAStringObject'),
+('prompt-object','internal/bridge/api.go','var raw map[string]json.RawMessage // every value must be a JSON string: null and other types are refused\n\t\t\tif Decode(r.Body, &raw) != nil || raw == nil {','var raw map[string]json.RawMessage\n\t\t\tif false {','TestCatalogInvalidArguments|TestPromptArgumentsMustBeAStringObject'),
 ('uri-required','internal/bridge/catalog.go','if uri == "" {','if false {','TestCatalogInvalidArguments'),
 ('structured-output','internal/bridge/gateway.go','if res.IsError {','res.StructuredContent=nil; if res.IsError {','TestRemoteSurfaces'),
 ('tool-http-status','internal/bridge/gateway.go','failure(200, "TOOL_ERROR")','failure(502, "TOOL_ERROR")','TestRemoteSurfaces'),
