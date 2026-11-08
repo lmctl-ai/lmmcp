@@ -56,11 +56,15 @@ func runHost(ctx context.Context, args []string, out io.Writer) int {
 		return emit(out, 2, "USAGE")
 	}
 	if schema {
-		_, _ = out.Write(host.Schema)
+		if _, err := out.Write(host.Schema); err != nil {
+			return 3
+		}
 		return 0
 	}
 	if sigs {
-		_, _ = io.WriteString(out, host.Signatures(ctx))
+		if _, err := io.WriteString(out, host.Signatures(ctx)); err != nil {
+			return 3
+		}
 		return 0
 	}
 	raw, e := os.ReadFile(config)

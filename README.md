@@ -60,9 +60,10 @@ Results are `{ok:true,data:...}` or `{ok:false,error:{code,message}}`. MCP `isEr
 is HTTP **200** with `ok:false`, `error.code:TOOL_ERROR` and the original MCP
 result in `data`; the CLI exits **3**. This lets a caller distinguish tool failure
 from transport failure. Known-secret suppression overrides content preservation.
-CLI exits: 0 success, 2 invalid request/config, 3 tool/upstream/auth/policy error,
-4 cancellation. Each client action prints one JSON document. Progress and
-lifecycle/list-change events are typed JSON on stderr. `--version` prints JSON.
+CLI exits: 0 success, 2 invalid request/config, 3 tool/upstream/auth/policy error
+or broken stdout, 4 cancellation (`SIGINT`, `SIGTERM`, `SIGHUP`). Each client action
+prints one JSON document on stdout; stderr is never used for JSON error output
+(progress and lifecycle/list-change events are typed JSON on stderr). `--version` prints JSON.
 
 Use `X-Request-ID` to name an HTTP request; DELETE `/v1/requests/{id}` cancels it.
 HTTP disconnect and Ctrl-C propagate MCP cancellation. Session-bearing POST 404
@@ -119,17 +120,19 @@ prevent browser cross-origin access; no CORS.
 Stdio inherits PATH only by default; `envAllowlist: []` inherits nothing. Parsed
 `${NAME}` env references read only that variable. Literal env values are for
 nonsecret settings. Child stderr is discarded and upstream error strings omitted.
-Known referenced env values/bearer tokens are blocked from serialized results;
-this is not general DLP. `allowTools`/`denyTools` contain exact names, deny wins,
+Known referenced env values/bearer tokens of length `>= 8` bytes are blocked from
+serialized string and numeric results (shorter values such as `"1"` or `"dev"` are
+not treated as secrets so normal outputs are not over-blocked); this is not general DLP. `allowTools`/`denyTools` contain exact names, deny wins,
 and empty allow permits none. `--read-only` requires readOnlyHint=true without
 destructiveHint=true; annotations are untrusted hints, not a sandbox.
 
 No call deadline, response truncation, frame/event ceiling or retry sleep is
 added. SDK automatic reconnect delays are disabled. Shutdown terminates/reaps
-owned children and inherited Unix process groups / Windows taskkill trees.
+owned children and inherited Unix process groups / Windows taskkill trees, and Linux
+sets `Pdeathsig: SIGKILL` so children cannot outlive a `SIGKILL` of the parent.
 Deliberately detached daemons remain outside this slice's trusted-command scope.
 
-Local gates: `go vet ./...`, `go test -race ./...`, five CGO-disabled cross-builds.
+Local gates: `go vet ./...`, `CGO_ENABLED=1 go test -race ./...` (requires a C compiler on `PATH` or `CC`), five CGO-disabled cross-builds.
 `go test -tags integration ./...` additionally requires `LMMCP_TEST_LMMOCK` pointing
 to the SHA-256-verified lmmock v0.1.110 asset and `LMMCP_TEST_PROGRAM` to its compiled
 `examples/mcp/server.lms`. The integration fixture explicitly sets JSON/SSE mode

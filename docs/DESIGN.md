@@ -30,9 +30,11 @@ Known-secret protection takes precedence over returning any content.
 
 `stdio --config FILE` serves the same dispatcher as concurrent JSON lines:
 {id,method,path,query,body} → {id,status,headers,body}. IDs are nonempty safe ASCII
-strings or nonnegative integer tokens. EOF drains work; broken output/Ctrl-C cancels.
-Each CLI action prints one JSON document; serve prints its address once. Numeric
-progress/lifecycle/list_changed events use stderr, never mixed into stdout.
+strings or nonnegative integer tokens. EOF drains work; broken stdout exits 3;
+`SIGINT`/`SIGTERM`/`SIGHUP` cancels (exit 4) even when stdin is an open pipe.
+Each CLI action prints one JSON document on stdout; serve prints its address once.
+Stderr is never used for JSON error responses; numeric progress/lifecycle/list_changed
+events use stderr, never mixed into stdout.
 
 ## Configuration and lifecycle
 
@@ -58,10 +60,15 @@ not the SDK's fixed DELETE deadline; cancellation ends owned reads/connections.
 
 Stdio uses IOTransport MaxLineLength=-1 rather than CommandTransport's fixed
 shutdown escalation/frame ceiling. Shutdown closes pipes, terminates/reaps owned
-Unix groups or Windows taskkill /T trees. Detached daemons are outside this slice.
+Unix groups (plus Linux `Pdeathsig: SIGKILL` on parent death) or Windows taskkill /T trees. Detached daemons are outside this slice.
 Child stderr is discarded; SDK logs suppressed. Typed errors omit upstream text.
-Known referenced env values and bearer tokens are blocked even when JSON-escaped;
-this is not general DLP. Loopback bind, optional bearer from file/env NAME, strict
+Known referenced env values and bearer tokens (`>= 8` bytes, across JSON strings and
+`json.Number` values) are blocked even when JSON-escaped; shorter non-secret values
+are not over-blocked; this is not general DLP. `go.mod` pins tagged `go-sdk` releases
+by default and only uses an explicit commit pseudo-version (`v1.8.1-0.20261106153814-df0f29525bc6`)
+when required for unreleased transport fixes (`StreamableClientTransport.MaxEventSize`
+and non-blocking `2026-07-28` `subscriptions/listen` during `Client.Connect`) until the
+next tagged release is published. Loopback bind, optional bearer from file/env NAME, strict
 Host/Origin and no CORS. Deny wins; readonly requires readOnlyHint=true and no
 contradictory destructiveHint. Annotations are hints, not a sandbox.
 

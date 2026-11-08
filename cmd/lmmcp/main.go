@@ -11,8 +11,10 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 type options struct {
@@ -27,6 +29,10 @@ func parse(args []string) (options, error) {
 		return o, fmt.Errorf("usage")
 	}
 	o.command = args[0]
+	if o.command == "openapi" && len(args) > 1 {
+		return o, fmt.Errorf("usage")
+	}
+	seen := map[string]bool{}
 	for i := 1; i < len(args); i++ {
 		word := args[i]
 		if word == "--" {
@@ -39,9 +45,10 @@ func parse(args []string) (options, error) {
 		}
 		key, value, equals := strings.Cut(word, "=")
 		if key == "--read-only" {
-			if equals {
+			if equals || seen[key] {
 				return o, fmt.Errorf("usage")
 			}
+			seen[key] = true
 			o.readonly = true
 			continue
 		}
@@ -54,10 +61,22 @@ func parse(args []string) (options, error) {
 		}
 		switch key {
 		case "--config":
+			if seen[key] {
+				return o, fmt.Errorf("usage")
+			}
+			seen[key] = true
 			o.config = value
 		case "--url":
+			if seen[key] {
+				return o, fmt.Errorf("usage")
+			}
+			seen[key] = true
 			o.url = value
 		case "--listen":
+			if seen[key] {
+				return o, fmt.Errorf("usage")
+			}
+			seen[key] = true
 			o.listen = value
 		case "--json":
 			if o.json != "" {
@@ -67,8 +86,16 @@ func parse(args []string) (options, error) {
 		case "--arg":
 			o.args = append(o.args, value)
 		case "--token-file":
+			if seen[key] {
+				return o, fmt.Errorf("usage")
+			}
+			seen[key] = true
 			o.tokenFile = value
 		case "--token-env":
+			if seen[key] {
+				return o, fmt.Errorf("usage")
+			}
+			seen[key] = true
 			o.tokenEnv = value
 		default:
 			return o, fmt.Errorf("usage")
@@ -77,10 +104,21 @@ func parse(args []string) (options, error) {
 	if o.config != "" && o.url != "" || o.json != "" && len(o.args) > 0 || o.tokenFile != "" && o.tokenEnv != "" {
 		return o, fmt.Errorf("usage")
 	}
+	if seen["--listen"] && o.command != "serve" {
+		return o, fmt.Errorf("usage")
+	}
+	if (o.json != "" || len(o.args) > 0) && o.command != "call" && o.command != "prompt" {
+		return o, fmt.Errorf("usage")
+	}
 	return o, nil
 }
+func writeJSON(w io.Writer, v any) bool {
+	return json.NewEncoder(w).Encode(v) == nil
+}
 func emit(w io.Writer, status int, code string) int {
-	json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": map[string]string{"code": code, "message": strings.ToLower(strings.ReplaceAll(code, "_", " "))}})
+	if !writeJSON(w, map[string]any{"ok": false, "error": map[string]string{"code": code, "message": strings.ToLower(strings.ReplaceAll(code, "_", " "))}}) {
+		return 3
+	}
 	return status
 }
 func auth(o options) (string, error) {
@@ -126,9 +164,16 @@ func envName(s string) bool {
 	return true
 }
 func loopback(address string) bool {
-	host, _, e := net.SplitHostPort(address)
+	host, portText, e := net.SplitHostPort(address)
+	if e != nil {
+		return false
+	}
+	port, pErr := strconv.Atoi(portText)
+	if pErr != nil || port < 0 || port > 65535 {
+		return false
+	}
 	ip := net.ParseIP(host)
-	return e == nil && ip != nil && ip.IsLoopback()
+	return ip != nil && ip.IsLoopback()
 }
 func request(o options) (bridge.Request, error) {
 	r := bridge.Request{Method: "GET"}
@@ -242,7 +287,9 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 		return runHost(ctx, args, out)
 	}
 	if len(args) == 1 && args[0] == "--version" {
-		json.NewEncoder(out).Encode(map[string]string{"name": "lmmcp", "version": "0.1.0"})
+		if !writeJSON(out, map[string]string{"name": "lmmcp", "version": "0.1.0"}) {
+			return 3
+		}
 		return 0
 	}
 	o, e := parse(args)
@@ -250,7 +297,9 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 		return emit(out, 2, "USAGE")
 	}
 	if o.command == "openapi" {
-		json.NewEncoder(out).Encode(bridge.OpenAPI())
+		if !writeJSON(out, bridge.OpenAPI()) {
+			return 3
+		}
 		return 0
 	}
 	if o.command == "serve" && !loopback(o.listen) {
@@ -279,7 +328,9 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 			}
 			return emit(out, 3, "SERVER_ERROR")
 		}
-		json.NewEncoder(out).Encode(res.Body)
+		if !writeJSON(out, res.Body) {
+			return 3
+		}
 		return bridge.Exit(res)
 	}
 	if o.config == "" {
@@ -317,7 +368,10 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 		srv := &http.Server{Handler: g.Handler(token, listener.Addr().String())}
 		stop := context.AfterFunc(ctx, func() { g.Close(); _ = srv.Close() })
 		defer stop()
-		json.NewEncoder(out).Encode(map[string]any{"ok": true, "url": "http://" + listener.Addr().String()})
+		if !writeJSON(out, map[string]any{"ok": true, "url": "http://" + listener.Addr().String()}) {
+			_ = srv.Close()
+			return 3
+		}
 		e = srv.Serve(listener)
 		if ctx.Err() != nil {
 			return 4
@@ -331,12 +385,15 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 			return emit(out, 2, "USAGE")
 		}
 		res := g.Safe(g.Dispatch(ctx, r))
-		json.NewEncoder(out).Encode(res.Body)
+		if !writeJSON(out, res.Body) {
+			return 3
+		}
 		return bridge.Exit(res)
 	}
 }
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	signal.Ignore(syscall.SIGPIPE)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()
