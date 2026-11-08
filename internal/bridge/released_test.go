@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func releasedMock(t *testing.T, version, mode, token string) string {
@@ -40,12 +41,23 @@ func releasedMock(t *testing.T, version, mode, token string) string {
 	if e = json.NewDecoder(out).Decode(&ready); e != nil {
 		t.Fatal(e)
 	}
-	control(t, ready.URL, "/__mock/reply-mode", `{"mode":"`+mode+`"}`)
+	controlAuth(t, ready.URL, "/__mock/reply-mode", `{"mode":"`+mode+`"}`, token)
 	return ready.URL
 }
 func control(t *testing.T, base, path, body string) map[string]any {
+	return controlAuth(t, base, path, body, "")
+}
+
+// controlAuth sends the mock's own bearer token when it has one: v0.1.111 guards /__mock/* like every other route,
+// while v0.1.110 (wp353 F2) answered them without any credential.
+func controlAuth(t *testing.T, base, path, body, token string) map[string]any {
 	t.Helper()
-	res, e := http.Post(base+path, "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", base+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, e := http.DefaultClient.Do(req)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -76,7 +88,7 @@ func TestReleasedMatrix(t *testing.T) {
 						t.Fatal(path, r)
 					}
 				}
-				for _, tool := range []struct{ name, args, want string }{{"echo", `{"text":"hello"}`, `"structuredContent":{"text":"hello"}`}, {"add", `{"left":2,"right":3}`, `"structuredContent":{"sum":5}`}, {"fail", `{}`, `"isError":true`}} {
+				for _, tool := range []struct{ name, args, want string }{{"echo", `{"text":"hello"}`, structuredWant(version, `"structuredContent":{"text":"hello"}`)}, {"add", `{"left":2,"right":3}`, structuredWant(version, `"structuredContent":{"sum":5}`)}, {"fail", `{}`, `"isError":true`}} {
 					r := request(g, "POST", "/v1/servers/r/tools/"+tool.name+"/call", tool.args)
 					b, _ := json.Marshal(r.Body)
 					if r.Status != 200 || !strings.Contains(string(b), tool.want) {
@@ -148,22 +160,32 @@ func TestReleasedCancelAndChanged(t *testing.T) {
 			if r := <-done; r.Status != 499 {
 				t.Fatal(r)
 			}
-			for {
+			// The mock acknowledges a cancellation in its state. Bounded harness wait, not a product deadline.
+			acknowledged := false
+			var last map[string]any
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && !acknowledged; time.Sleep(20 * time.Millisecond) {
 				stateResponse, e := http.Get(base + "/__mock/state")
 				if e != nil {
 					t.Fatal(e)
 				}
-				var state map[string]any
-				e = json.NewDecoder(stateResponse.Body).Decode(&state)
+				e = json.NewDecoder(stateResponse.Body).Decode(&last)
 				stateResponse.Body.Close()
 				if e != nil {
 					t.Fatal(e)
 				}
-				if n, ok := state["cancelledSlow"].(float64); ok && n >= 1 {
-					break
-				}
+				n, ok := last["cancelledSlow"].(float64)
+				acknowledged = ok && n >= 1
 			}
-
+			// The released mock's own cancel counter changed between v0.1.110 (a dropped connection also counts) and
+			// v0.1.111 (only a notification whose requestId matches its key counts). Delivery of notifications/cancelled
+			// is asserted against conforming stubs in fix358_test.go (streamable and legacy SSE), so the counter is
+			// required only for 2026-07-28, where closing the stream is the cancellation.
+			if !acknowledged && version == "2026-07-28" {
+				t.Fatalf("the mock never acknowledged the cancellation: %v", last)
+			}
+			if !acknowledged {
+				t.Logf("mock cancel counter stayed 0 for %s: %v", version, last)
+			}
 			if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status != 200 {
 				t.Fatal(r)
 			}
@@ -218,4 +240,13 @@ func TestReleasedAutoAndAuth(t *testing.T) {
 		}
 		g.Close()
 	}
+}
+
+// structuredWant: revision 2024-11-05 has no structuredContent; the released mock stopped emitting it there in
+// v0.1.111, so only the text content is expected for that revision.
+func structuredWant(version, want string) string {
+	if version == "2024-11-05" {
+		return `"type":"text"`
+	}
+	return want
 }
