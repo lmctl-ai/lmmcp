@@ -229,6 +229,12 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	case <-e.gate:
 	}
 	defer func() { e.gate <- struct{}{} }()
+	g.mu.Lock()
+	closed := g.closed
+	g.mu.Unlock()
+	if closed || g.ctx.Err() != nil || ctx.Err() != nil {
+		return nil, bad("CANCELLED")
+	}
 	if e.session != nil && e.broken == e.session {
 		g.dropCurrent(e) // dead for new work; operations still on it finish or fail on their own
 	}
@@ -367,6 +373,9 @@ func (g *Gateway) closeConn(session *mcp.ClientSession, remote *remoteState, pro
 
 // Abort releases session teardown requests that are still waiting on an unresponsive server.
 func (g *Gateway) Abort() { g.abortTeardown() }
+
+// Done closes when the gateway begins shutting down.
+func (g *Gateway) Done() <-chan struct{} { return g.ctx.Done() }
 
 func (g *Gateway) invalidate(e *entry) {
 	<-e.gate

@@ -134,6 +134,7 @@ func abortOnSecondSignal(ctx context.Context, g *bridge.Gateway) func() {
 	go func() {
 		select {
 		case <-ctx.Done():
+		case <-g.Done():
 		case <-done:
 			return
 		}
@@ -265,8 +266,8 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 	if e != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
 		return bridge.Response{}, fmt.Errorf("url")
 	}
-	ip := net.ParseIP(u.Hostname())
-	if u.Scheme != "https" && (u.Scheme != "http" || ip == nil || !ip.IsLoopback()) || ip != nil && bridge.ForbiddenAddress(ip) {
+	ip := bridge.ParseHostIP(u.Hostname())
+	if u.Scheme != "https" && (u.Scheme != "http" || net.ParseIP(u.Hostname()) == nil || ip == nil || !ip.IsLoopback()) || ip != nil && bridge.ForbiddenAddress(ip) {
 		return bridge.Response{}, fmt.Errorf("url")
 	}
 	token, e := auth(o)
@@ -289,7 +290,7 @@ func remote(ctx context.Context, o options, r bridge.Request) (bridge.Response, 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: bridge.SafeDialer().DialContext}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("redirect refused") }}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: bridge.SafeDialer().DialContext, ForceAttemptHTTP2: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("redirect refused") }}
 	res, e := client.Do(req)
 	if e != nil {
 		return bridge.Response{}, e
@@ -382,8 +383,8 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 	if e != nil {
 		return emit(out, 2, "INVALID_CONFIG")
 	}
-	defer g.Close()
 	defer abortOnSecondSignal(ctx, g)()
+	defer g.Close()
 	switch o.command {
 	case "stdio":
 		if o.tokenFile != "" || o.tokenEnv != "" {
@@ -400,7 +401,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, errout io.Writer
 			return emit(out, 3, "LISTEN_FAILED")
 		}
 		srv := &http.Server{Handler: g.Handler(token, listener.Addr().String())}
-		stop := context.AfterFunc(ctx, func() { g.Close(); _ = srv.Close() })
+		stop := context.AfterFunc(ctx, func() { _ = srv.Close(); g.Close() })
 		defer stop()
 		if !writeJSON(out, map[string]any{"ok": true, "url": "http://" + listener.Addr().String()}) {
 			_ = srv.Close()

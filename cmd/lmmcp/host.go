@@ -79,7 +79,7 @@ func runHost(ctx context.Context, args []string, out io.Writer) int {
 	if e != nil {
 		return host.Fail(out, "INVALID_CONFIG")
 	}
-	defer g.Close()
 	defer abortOnSecondSignal(ctx, g)()
+	defer g.Close()
 	return host.Run(files, ctx, g, out)
 }
