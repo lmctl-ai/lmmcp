@@ -19,7 +19,8 @@ func OpenAPI() map[string]any {
 		if path == "/v1/servers/{server}/resources/read" {
 			parameters = append(parameters, map[string]any{"name": "uri", "in": "query", "required": true, "schema": map[string]string{"type": "string"}})
 		}
-		op := map[string]any{"parameters": parameters, "responses": map[string]any{"200": map[string]any{"description": "Complete JSON result; tool isError returns HTTP 200 with ok=false, error.code=TOOL_ERROR and original MCP data (CLI exit 3)", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Envelope"}}}}, "default": map[string]any{"description": "JSON error with code/message; 400 invalid, 401 auth, 403 policy, 404 absent, 409 duplicate id, 499 cancelled, 502 upstream"}}}
+		envelopeRef := map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Envelope"}}}
+		op := map[string]any{"parameters": parameters, "responses": map[string]any{"200": map[string]any{"description": "Complete JSON result; tool isError returns HTTP 200 with ok=false, error.code=TOOL_ERROR and original MCP data (CLI exit 3)", "content": envelopeRef}, "default": map[string]any{"description": "JSON error with code/message; 400 invalid, 401 auth, 403 policy, 404 absent, 409 duplicate id, 499 cancelled, 502 upstream", "content": envelopeRef}}}
 		if path == "/v1/openapi.json" {
 			op["responses"].(map[string]any)["200"].(map[string]any)["content"] = map[string]any{"application/json": map[string]any{"schema": map[string]string{"type": "object"}}}
 		}

@@ -3,10 +3,26 @@ package bridge
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"unicode/utf8"
 )
 
+func invalidUTF8Offset(data []byte) int {
+	for i := 0; i < len(data); {
+		r, width := utf8.DecodeRune(data[i:])
+		if r == utf8.RuneError && width == 1 {
+			return i
+		}
+		i += width
+	}
+	return -1
+}
+
 func Decode(data []byte, dst any) error {
+	if idx := invalidUTF8Offset(data); idx >= 0 {
+		return &Error{Code: "INVALID_UTF8", Message: fmt.Sprintf("invalid utf-8 at byte %d", idx)}
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	type frame struct {

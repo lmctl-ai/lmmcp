@@ -77,7 +77,7 @@ func Load(data []byte) (Config, error) {
 		return cfg, bad("INVALID_CONFIG")
 	}
 	for name, c := range cfg.Servers {
-		if name == "" || strings.ContainsAny(name, "\r\n\x00") {
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\r\n\x00") {
 			return cfg, bad("INVALID_CONFIG")
 		}
 		if (c.Command == "") == (c.URL == "") {
@@ -94,8 +94,13 @@ func Load(data []byte) (Config, error) {
 				return cfg, bad("INVALID_CONFIG")
 			}
 		}
+		for _, tool := range append(append([]string(nil), c.AllowTools...), c.DenyTools...) {
+			if tool == "" || strings.ContainsRune(tool, 0) {
+				return cfg, bad("INVALID_CONFIG")
+			}
+		}
 		for k, v := range c.Env {
-			if !envName(k) {
+			if !envName(k) || strings.ContainsRune(v, 0) {
 				return cfg, bad("INVALID_CONFIG")
 			}
 			if _, _, e := expand(v, func(string) (string, bool) { return "fixture", true }); e != nil {

@@ -64,6 +64,7 @@ type entry struct {
 	active  int
 	gate    chan struct{}
 	session *mcp.ClientSession
+	tools   []*mcp.Tool
 	process *child
 	remote  *remoteState
 }
@@ -111,11 +112,17 @@ func New(c Config, o Options) (*Gateway, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Gateway{cfg: c, opts: o, ctx: ctx, cancel: cancel, entries: map[string]*entry{}, requests: map[string]context.CancelFunc{}}, nil
 }
+const minSecretLen = 8
+
 func (g *Gateway) StartCount() int64 { return g.starts.Load() }
 func (g *Gateway) addSecrets(values ...string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.secrets = append(g.secrets, values...)
+	for _, v := range values {
+		if len(v) >= minSecretLen {
+			g.secrets = append(g.secrets, v)
+		}
+	}
 }
 func (g *Gateway) Safe(r Response) Response {
 	g.mu.Lock()
@@ -145,7 +152,14 @@ func Protect(r Response, secrets []string) Response {
 		switch x := v.(type) {
 		case string:
 			for _, s := range secrets {
-				if s != "" && strings.Contains(x, s) {
+				if len(s) >= minSecretLen && strings.Contains(x, s) {
+					return true
+				}
+			}
+		case json.Number:
+			num := x.String()
+			for _, s := range secrets {
+				if len(s) >= minSecretLen && strings.Contains(num, s) {
 					return true
 				}
 			}
@@ -204,6 +218,7 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 		}
 		_ = e.session.Close()
 		e.session = nil
+		e.tools = nil
 		if e.process != nil {
 			e.process.Close()
 		}
@@ -271,7 +286,10 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	g.starts.Add(1)
 	owned := &child{command: cmd, reader: stdout, writer: stdin}
 	e.process = owned
-	g.opts.Event(Event{Kind: "started", Server: name})
+	started := Event{Kind: "started", Server: name}
+	if g.Safe(success(started)).Status == 200 {
+		g.opts.Event(started)
+	}
 
 	session, err := client.Connect(ctx, &mcp.IOTransport{Reader: owned, Writer: stdin, MaxLineLength: -1}, nil)
 	if err != nil {
@@ -307,6 +325,7 @@ func (g *Gateway) invalidate(e *entry) {
 		_ = e.session.Close()
 		e.session = nil
 	}
+	e.tools = nil
 	if e.process != nil {
 		e.process.Close()
 	}
@@ -329,18 +348,22 @@ func (g *Gateway) Close() {
 		g.invalidate(e)
 	}
 }
-func (g *Gateway) tools(ctx context.Context, name string) ([]*mcp.Tool, *entry, error) {
+func (g *Gateway) tools(ctx context.Context, name string, refresh bool) ([]*mcp.Tool, *entry, error) {
 	e, err := g.get(ctx, name)
 	if err != nil {
 		return nil, nil, err
 	}
 	<-e.gate
 	session := e.session
+	cached := e.tools
 	e.gate <- struct{}{}
 	if session == nil {
 		return nil, nil, bad("UPSTREAM_FAILED")
 	}
-	var tools []*mcp.Tool
+	if !refresh && cached != nil {
+		return cached, e, nil
+	}
+	tools := []*mcp.Tool{}
 	cursor := ""
 	seen := map[string]bool{}
 	for {
@@ -360,6 +383,11 @@ func (g *Gateway) tools(ctx context.Context, name string) ([]*mcp.Tool, *entry, 
 		seen[res.NextCursor] = true
 		cursor = res.NextCursor
 	}
+	<-e.gate
+	if e.session != nil {
+		e.tools = tools
+	}
+	e.gate <- struct{}{}
 	return tools, e, nil
 }
 func (g *Gateway) servers() any {
@@ -387,7 +415,7 @@ func (g *Gateway) invoke(ctx context.Context, name, tool string, args map[string
 	if has(c.DenyTools, tool) || c.AllowTools != nil && !has(c.AllowTools, tool) {
 		return failure(403, "TOOL_DENIED")
 	}
-	tools, e, err := g.tools(ctx, name)
+	tools, e, err := g.tools(ctx, name, false)
 	if err != nil {
 		return errorResponse(ctx, err)
 	}
@@ -444,6 +472,8 @@ func errorResponse(ctx context.Context, e error) Response {
 	switch e.Error() {
 	case "SERVER_NOT_FOUND":
 		return failure(404, "SERVER_NOT_FOUND")
+	case "SERVER_DISABLED", "ENV_NOT_SET", "INVALID_ENV", "INVALID_ENV_REFERENCE":
+		return failure(400, e.Error())
 	case "UNSUPPORTED_TRANSPORT":
 		return failure(501, "UNSUPPORTED_TRANSPORT")
 	case "CANCELLED":

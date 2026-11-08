@@ -77,6 +77,9 @@ func validateRemote(c ServerConfig) error {
 		case "content-type", "accept", "content-length", "connection", "transfer-encoding", "mcp-session-id", "mcp-protocol-version", "mcp-method", "mcp-name":
 			return bad("RESERVED_HEADER")
 		}
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return bad("INVALID_HEADER")
+		}
 		if !strings.Contains(v, "${") {
 			return bad("HEADER_REFERENCE_REQUIRED")
 		}
@@ -266,6 +269,7 @@ func (g *Gateway) invalidateSession(e *entry, s *mcp.ClientSession) {
 		}
 		_ = e.session.Close()
 		e.session = nil
+		e.tools = nil
 		if e.process != nil {
 			e.process.Close()
 		}
