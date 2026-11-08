@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    # Execute checks only at the canonical public destination.
+    if: ${{ github.repository == 'lmctl-ai/lmmcp' && !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CGO_ENABLED: '1'
+      CC: gcc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Vet, race/integration, cross-builds, mutations and end-to-end checks
+        run: >-
+          python3 scripts/ci.py --go go --cc gcc
+          --mock-prefix "$RUNNER_TEMP/lmmcp-mock"
+          --evidence "$RUNNER_TEMP/lmmcp-ci"
