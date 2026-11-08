@@ -5,11 +5,22 @@ Go module: `github.com/lmctl-ai/lmmcp`.
 One Go binary exposes configured MCP servers through REST, a CLI and JSON-lines
 REST over stdio. It supports stdio, Streamable HTTP and legacy HTTP+SSE MCP.
 Development and tests use loopback mocks only; the operator configures real servers.
-This repository is private for now: no workflows, CI dispatches or releases.
+Source builds only; no release yet. Project code is [MIT licensed](LICENSE);
+[third-party notices](THIRD_PARTY_NOTICES.md) retain dependency licenses.
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## Quickstart for an LLM or script
 
-Build with Go 1.26 or newer (`CGO_ENABLED=0 go build ./cmd/lmmcp`). Standard
+Build with Go 1.26 or newer:
+
+```console
+git clone https://github.com/lmctl-ai/lmmcp.git
+cd lmmcp
+CGO_ENABLED=0 go build -o lmmcp ./cmd/lmmcp
+./lmmcp --version
+```
+
+Standard
 `mcpServers` entries (`command`/`args`/`env`/`cwd`, or `url`/`headers`) work; keys
 other clients add (`timeout`, `autoApprove`, `type:"streamableHttp"`) and literal
 header values are refused with a specific error code. For a local MCP process:
@@ -151,5 +162,24 @@ lmscript cells run as `lmmock exec --lmcode PROGRAM --config '{"protocolVersion"
 --version V`. The integration fixture explicitly sets JSON/SSE mode
 through `/__mock/reply-mode`; its config `replyMode` alone has no effect.
 `scripts/mutations-slice2.py` and `scripts/remote-e2e.py` reproduce adversarial and
-actual CLI/lmscript checks. See [short design](docs/DESIGN.md). Public packaging,
-release plumbing and native Windows/macOS qualification are separate work.
+actual CLI/lmscript checks. See [short design](docs/DESIGN.md).
+
+## Repository checks
+
+`python3 scripts/ci.py --mock-prefix /absolute/mock-cache --evidence /absolute/test-output`
+runs the same gates as public CI: vet, race/integration tests with a C compiler,
+five CGO-disabled cross-builds, all three mutation suites, stdio/HTTP e2e, and six
+remote CLI/lmscript cells against pinned lmmock v0.1.111. It also verifies the
+license inventory against the built binaries. CI uses Go 1.27.3 and gcc on
+ubuntu-latest, with read-only repository permissions and no account secrets.
+The workflow runs on push and pull_request to main only at the canonical public
+lmctl-ai/lmmcp destination.
+
+Mock preparation uses unauthenticated public downloads with pinned checksum
+manifest and source-commit verification; npm uses empty prefix-local configs.
+Regenerate dependency notices with `python3 scripts/third_party_notices.py` and
+check them with `python3 scripts/third_party_notices.py --verify`. The inventory
+covers production imports across all five targets and the Go runtime.
+
+There is no release workflow and no release yet. Windows/macOS targets are
+cross-compiled in these gates; native runtime qualification is not claimed.

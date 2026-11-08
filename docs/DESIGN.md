@@ -1,4 +1,4 @@
-# lmmcp: thin MCP bridge (slices 1–2)
+# lmmcp: thin MCP bridge
 
 Build thin on the official Go SDK, not a fork. [mcpgate](https://github.com/mokeyish/mcpgate)
 uses mcpServers and service transport routes; [MCPJungle](https://github.com/MCPJungle/MCPJungle)
@@ -104,7 +104,9 @@ Tests use SDK fixtures and SHA-256-verified released lmmock v0.1.111: three
 transports, JSON/SSE, resources text/blob, prompts, schema/structured results,
 cancellation, progress, expiry, auth and changes. Test assertions, mutations,
 race/vet, five cross-builds and actual lmscript execution gate this slice locally.
-No workflows, public counterpart or release pipeline here. Native platform
-qualification and public packaging come next; operator wires real MCP servers.
+Public CI runs these gates on main pushes and pull requests, with read-only
+permissions, pinned actions and released loopback fixtures, only at the canonical
+public destination. No release workflow or release exists yet; native
+platform qualification is not claimed. Operator alone wires real MCP servers.
 
 Canonical Go module: `github.com/lmctl-ai/lmmcp`.
