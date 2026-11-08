@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 func remoteKind(c ServerConfig) string {
@@ -45,11 +47,11 @@ func networkURL(raw string, allowPrivate bool) (*url.URL, error) {
 	if u.Scheme != "https" && (u.Scheme != "http" || ip == nil || !ip.IsLoopback()) {
 		return nil, bad("INVALID_REMOTE_URL")
 	}
-	if ip != nil {
-		if forbiddenAddress(ip) {
+	if parsed, ok := parseHostIP(u.Hostname()); ok {
+		if forbiddenAddress(parsed) {
 			return nil, bad("INVALID_REMOTE_URL")
 		}
-		if !allowPrivate && privateAddress(ip) && !(u.Scheme == "http" && ip.IsLoopback()) {
+		if !allowPrivate && privateAddress(parsed) && !(u.Scheme == "http" && ip != nil && ip.IsLoopback()) {
 			return nil, bad("INVALID_REMOTE_URL")
 		}
 	}
@@ -180,8 +182,7 @@ func (r *remoteState) terminate(session *mcp.ClientSession) {
 	}
 }
 
-// cancelNotification recognises a notifications/cancelled POST by its first bytes (JSON-RPC puts "method" before
-// "params"); the rest of the body is not read.
+// cancelNotification recognises a notifications/cancelled POST by decoding its JSON-RPC envelope structurally.
 func cancelNotification(req *http.Request) bool {
 	if req.Method != "POST" || req.GetBody == nil {
 		return false
@@ -191,8 +192,20 @@ func cancelNotification(req *http.Request) bool {
 		return false
 	}
 	defer rc.Close()
-	head, _ := io.ReadAll(io.LimitReader(rc, 256))
-	return strings.Contains(string(head), `"method":"notifications/cancelled"`)
+	var env struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+	}
+	dec := json.NewDecoder(rc)
+	if dec.Decode(&env) != nil {
+		return false
+	}
+	var extra any
+	if dec.Decode(&extra) != io.EOF {
+		return false
+	}
+	return env.JSONRPC == "2.0" && len(env.ID) == 0 && env.Method == "notifications/cancelled"
 }
 
 func (r *remoteState) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -295,7 +308,7 @@ func (g *Gateway) connectRemote(ctx context.Context, client *mcp.Client, c Serve
 	var transport mcp.Transport
 	legacy := kind == "sse"
 	makeStream := func() mcp.Transport {
-		return &mcp.StreamableClientTransport{Endpoint: c.URL, HTTPClient: hc, MaxRetries: -1, MaxEventSize: -1, DisableStandaloneSSE: version == "2025-11-25"}
+		return &mcp.StreamableClientTransport{Endpoint: c.URL, HTTPClient: hc, MaxRetries: -1, MaxEventSize: -1, DisableStandaloneSSE: true}
 	}
 	if kind == "sse" {
 		transport = &mcp.SSEClientTransport{Endpoint: c.URL, HTTPClient: hc, MaxEventSize: -1}
@@ -319,17 +332,17 @@ func (g *Gateway) connectRemote(ctx context.Context, client *mcp.Client, c Serve
 	if !legacy {
 		r.endpoint = c.URL
 	}
-	if version == "2025-11-25" && kind != "sse" && session.ID() != "" {
+	if !legacy && session.ID() != "" && version != "2026-07-28" && (session.InitializeResult() == nil || session.InitializeResult().ProtocolVersion != "2026-07-28") {
 		go g.watchChanges(r, hc, c.URL, session.ID(), name)
 	}
 	return session, r, nil
 }
 
 // newRemoteTransport ignores proxy environment variables on purpose (a proxy would defeat the address policy) and
-// checks every destination address at dial time.
+// checks every destination address at dial time, while keeping standard HTTP/2 and idle pool defaults.
 func newRemoteTransport(allowPrivate, loopbackLiteral bool, refused func()) *http.Transport {
 	dialer := &net.Dialer{Control: dialControl(allowPrivate, loopbackLiteral, refused)}
-	return &http.Transport{Proxy: nil, DialContext: dialer.DialContext}
+	return &http.Transport{Proxy: nil, DialContext: dialer.DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second}
 }
 func remoteError(r *remoteState, err error) error {
 	if r.refused.Load() {

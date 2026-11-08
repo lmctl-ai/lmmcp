@@ -17,6 +17,27 @@ func rpcFailure(status int, code string, mcpCode int) *Error {
 	return e
 }
 
+func isMissingEntityMessage(raw string) bool {
+	words := strings.FieldsFunc(strings.ToLower(raw), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	for i, w := range words {
+		if w == "not" && i+1 < len(words) && words[i+1] == "found" {
+			return true
+		}
+		if w == "unknown" {
+			if i+1 < len(words) {
+				switch words[i+1] {
+				case "argument", "arguments", "parameter", "parameters", "field", "fields", "option", "options":
+					continue
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // mapRPC turns a JSON-RPC error answered by an MCP server into a typed REST error. The upstream message is never
 // copied: only the code, so a server cannot echo text (or a credential) through it. kind is the operation family.
 func mapRPC(err error, kind string) *Error {
@@ -28,8 +49,7 @@ func mapRPC(err error, kind string) *Error {
 	if code == -32004 || code == -32005 {
 		return nil // the SDK's own "connection is closing" / "rejected by transport": a local transport failure
 	}
-	message := strings.ToLower(we.Message)
-	missing := strings.Contains(message, "not found") || strings.Contains(message, "unknown")
+	missing := isMissingEntityMessage(we.Message)
 	switch {
 	case code == codeResourceNotFound:
 		return rpcFailure(404, "RESOURCE_NOT_FOUND", code)

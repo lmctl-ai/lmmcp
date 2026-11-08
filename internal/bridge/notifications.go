@@ -3,6 +3,7 @@ package bridge
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 )
@@ -40,11 +41,12 @@ func (g *Gateway) watchChanges(state *remoteState, client *http.Client, endpoint
 			return
 		}
 		var msg struct {
-			JSONRPC string `json:"jsonrpc"`
-			Method  string `json:"method"`
-			Params  any    `json:"params,omitempty"`
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+			Params  any             `json:"params,omitempty"`
 		}
-		if Decode(event, &msg) == nil && msg.JSONRPC == "2.0" && msg.Method == "notifications/tools/list_changed" {
+		if Decode(event, &msg) == nil && msg.JSONRPC == "2.0" && len(msg.ID) == 0 && msg.Method == "notifications/tools/list_changed" {
 			g.markChanged(name)
 			ev := Event{Kind: "list_changed", Server: name}
 			if g.Safe(success(ev)).Status == 200 {
@@ -63,9 +65,13 @@ func (g *Gateway) watchChanges(state *remoteState, client *http.Client, endpoint
 				dispatch()
 				continue
 			}
-			lineIsData = bytes.HasPrefix(fragment, []byte("data:"))
+			field, rest, hasColon := bytes.Cut(fragment, []byte(":"))
+			lineIsData = hasColon && string(field) == "data"
 			if lineIsData {
-				fragment = bytes.TrimPrefix(fragment[5:], []byte(" "))
+				if len(rest) > 0 && rest[0] == ' ' {
+					rest = rest[1:]
+				}
+				fragment = rest
 				if len(event) > 0 && !overflow && len(event) < classifyWindow {
 					event = append(event, '\n')
 				}
