@@ -291,3 +291,10 @@ func TestPromptArgumentsMustBeAStringObject(t *testing.T) {
 		t.Fatal("an invalid argument object reached the server")
 	}
 }
+
+func TestOpenAPIDocumentsMCPCode(t *testing.T) {
+	b, _ := json.Marshal(OpenAPI())
+	if !strings.Contains(string(b), `"mcpCode":{"description"`) || !strings.Contains(string(b), `"type":"integer"}`) {
+		t.Fatal("the error envelope does not document mcpCode")
+	}
+}
