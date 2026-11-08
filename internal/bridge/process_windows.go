@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,4 +16,7 @@ func stopProcess(cmd *exec.Cmd) {
 		_ = exec.Command(program, "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F").Run()
 		_ = cmd.Process.Kill()
 	}
+}
+func openPolledReader(_ context.Context, in io.Reader) (io.Reader, func()) {
+	return in, func() {}
 }

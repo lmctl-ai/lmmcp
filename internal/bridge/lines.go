@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"strings"
 	"sync"
 )
@@ -33,6 +35,19 @@ func lineID(raw json.RawMessage) (string, bool) {
 	}
 	return s, true
 }
+
+func partialID(line []byte) json.RawMessage {
+	var probe struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(line, &probe) == nil {
+		if _, ok := lineID(probe.ID); ok {
+			return probe.ID
+		}
+	}
+	return nil
+}
+
 func (g *Gateway) Lines(ctx context.Context, in io.Reader, out io.Writer) int {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -54,27 +69,42 @@ func (g *Gateway) Lines(ctx context.Context, in io.Reader, out io.Writer) int {
 			status = 3
 		}
 	}
-	reader := bufio.NewReader(in)
+	polled, cleanup := openPolledReader(ctx, in)
+	defer cleanup()
+	reader := bufio.NewReader(polled)
 	stop := context.AfterFunc(ctx, func() {
-		if closer, ok := in.(io.Closer); ok {
-			_ = closer.Close()
+		if _, isFile := in.(*os.File); !isFile {
+			if closer, ok := in.(io.Closer); ok {
+				_ = closer.Close()
+			}
 		}
 	})
 	defer stop()
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(strings.TrimSpace(string(line))) > 0 {
-			var r LineRequest
-			if Decode(line, &r) != nil {
-				send(nil, failure(400, "INVALID_REQUEST"))
-			} else if id, ok := lineID(r.ID); !ok {
-				send(nil, failure(400, "INVALID_ID"))
+			if len(line) == 0 || line[len(line)-1] != '\n' {
+				if ctx.Err() == nil {
+					send(partialID(line), failure(400, "INVALID_REQUEST"))
+				}
 			} else {
-				wg.Add(1)
-				go func(r LineRequest, id string) {
-					defer wg.Done()
-					send(r.ID, g.Dispatch(ctx, Request{ID: id, Method: r.Method, Path: r.Path, Query: r.Query, Body: r.Body}))
-				}(r, id)
+				var r LineRequest
+				if decErr := Decode(line, &r); decErr != nil {
+					var codeErr *Error
+					if errors.As(decErr, &codeErr) && codeErr.Code == "INVALID_UTF8" {
+						send(partialID(line), Response{400, map[string]string{"Content-Type": "application/json"}, map[string]any{"ok": false, "error": codeErr}})
+					} else {
+						send(partialID(line), failure(400, "INVALID_REQUEST"))
+					}
+				} else if id, ok := lineID(r.ID); !ok {
+					send(nil, failure(400, "INVALID_ID"))
+				} else {
+					wg.Add(1)
+					go func(r LineRequest, id string) {
+						defer wg.Done()
+						send(r.ID, g.Dispatch(ctx, Request{ID: id, Method: r.Method, Path: r.Path, Query: r.Query, Body: r.Body}))
+					}(r, id)
+				}
 			}
 		}
 		if err != nil {
@@ -85,6 +115,9 @@ func (g *Gateway) Lines(ctx context.Context, in io.Reader, out io.Writer) int {
 		}
 	}
 	wg.Wait()
+	if status != 0 {
+		return status
+	}
 	if ctx.Err() != nil {
 		return 4
 	}
