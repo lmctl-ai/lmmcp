@@ -24,6 +24,8 @@ type ServerConfig struct {
 	Disabled        bool              `json:"disabled,omitempty"`
 	AllowTools      []string          `json:"allowTools,omitempty"`
 	DenyTools       []string          `json:"denyTools,omitempty"`
+	// AllowPrivateAddresses defaults to true. false also refuses RFC 1918, CGNAT, ULA and loopback destinations.
+	AllowPrivateAddresses *bool `json:"allowPrivateAddresses,omitempty"`
 }
 
 func envName(s string) bool {

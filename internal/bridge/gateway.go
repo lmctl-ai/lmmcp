@@ -20,11 +20,13 @@ import (
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	MCPCode *int   `json:"mcpCode,omitempty"`
+	status  int    // HTTP status for errors that carry their own mapping (JSON-RPC errors); 0 = by code
 }
 
 func (e *Error) Error() string { return e.Code }
 func bad(code string) *Error {
-	return &Error{code, strings.ToLower(strings.ReplaceAll(code, "_", " "))}
+	return &Error{Code: code, Message: strings.ToLower(strings.ReplaceAll(code, "_", " "))}
 }
 
 type Request struct {
@@ -59,14 +61,24 @@ type Options struct {
 	Lookup   func(string) (string, bool)
 	Event    func(Event)
 }
+
+// entry is one configured server. session/remote/process/tools describe its CURRENT connection. users counts the
+// operations running on each session; a session that stopped being current while operations still use it is parked
+// in retired and closed by the last of them. broken names a current session that can no longer carry new work.
 type entry struct {
 	changed atomic.Bool
-	active  int
 	gate    chan struct{}
 	session *mcp.ClientSession
 	tools   []*mcp.Tool
 	process *child
 	remote  *remoteState
+	users   map[*mcp.ClientSession]int
+	retired map[*mcp.ClientSession]*retiredConn
+	broken  *mcp.ClientSession
+}
+type retiredConn struct {
+	remote  *remoteState
+	process *child
 }
 type child struct {
 	command *exec.Cmd
@@ -100,6 +112,11 @@ type Gateway struct {
 	requests map[string]context.CancelFunc
 	starts   atomic.Int64
 	ids      atomic.Uint64
+	// teardown ends only on Abort: session DELETE requests are not tied to request or lifetime cancellation and carry
+	// no deadline, so a stuck server is released by an explicit second shutdown signal, not by a timer.
+	teardown      context.Context
+	abortTeardown context.CancelFunc
+	closing       sync.WaitGroup
 }
 
 func New(c Config, o Options) (*Gateway, error) {
@@ -110,8 +127,10 @@ func New(c Config, o Options) (*Gateway, error) {
 		o.Event = func(Event) {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Gateway{cfg: c, opts: o, ctx: ctx, cancel: cancel, entries: map[string]*entry{}, requests: map[string]context.CancelFunc{}}, nil
+	teardown, abort := context.WithCancel(context.Background())
+	return &Gateway{cfg: c, opts: o, ctx: ctx, cancel: cancel, teardown: teardown, abortTeardown: abort, entries: map[string]*entry{}, requests: map[string]context.CancelFunc{}}, nil
 }
+
 const minSecretLen = 8
 
 func (g *Gateway) StartCount() int64 { return g.starts.Load() }
@@ -199,7 +218,7 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	}
 	e := g.entries[name]
 	if e == nil {
-		e = &entry{gate: make(chan struct{}, 1)}
+		e = &entry{gate: make(chan struct{}, 1), users: map[*mcp.ClientSession]int{}, retired: map[*mcp.ClientSession]*retiredConn{}}
 		e.gate <- struct{}{}
 		g.entries[name] = e
 	}
@@ -210,18 +229,11 @@ func (g *Gateway) get(ctx context.Context, name string) (*entry, error) {
 	case <-e.gate:
 	}
 	defer func() { e.gate <- struct{}{} }()
-	if e.session != nil && e.active == 0 && e.changed.Swap(false) {
-		if e.remote != nil {
-			e.remote.cancel()
-			e.remote.base.CloseIdleConnections()
-			e.remote = nil
-		}
-		_ = e.session.Close()
-		e.session = nil
-		e.tools = nil
-		if e.process != nil {
-			e.process.Close()
-		}
+	if e.session != nil && e.broken == e.session {
+		g.dropCurrent(e) // dead for new work; operations still on it finish or fail on their own
+	}
+	if e.session != nil && e.users[e.session] == 0 && e.changed.Swap(false) {
+		g.dropCurrent(e)
 	}
 	if e.session != nil {
 		return e, nil
@@ -314,20 +326,54 @@ func (g *Gateway) client(name string) *mcp.Client {
 		}
 	}})
 }
+
+// dropCurrent retires the current connection (caller holds e.gate). Operations still running on it keep it alive; the
+// last one to finish closes it. With no users it is closed now.
+func (g *Gateway) dropCurrent(e *entry) {
+	session, remote, process := e.session, e.remote, e.process
+	e.session, e.remote, e.process, e.tools, e.broken = nil, nil, nil, nil, nil
+	if session == nil {
+		if process != nil {
+			process.Close()
+		}
+		return
+	}
+	if e.users[session] > 0 {
+		e.retired[session] = &retiredConn{remote: remote, process: process}
+		return
+	}
+	g.closeConn(session, remote, process)
+}
+
+// closeConn ends one connection. A remote session sends its DELETE first and only then cancels the lifetime context,
+// in the background so a slow server never blocks other work; Close waits for these.
+func (g *Gateway) closeConn(session *mcp.ClientSession, remote *remoteState, process *child) {
+	if remote == nil {
+		_ = session.Close()
+		if process != nil {
+			process.Close()
+		}
+		return
+	}
+	g.closing.Add(1)
+	go func() {
+		defer g.closing.Done()
+		remote.terminate(session)
+		_ = session.Close()
+		remote.cancel()
+		remote.base.CloseIdleConnections()
+	}()
+}
+
+// Abort releases session teardown requests that are still waiting on an unresponsive server.
+func (g *Gateway) Abort() { g.abortTeardown() }
+
 func (g *Gateway) invalidate(e *entry) {
 	<-e.gate
-	if e.remote != nil {
-		e.remote.cancel()
-		e.remote.base.CloseIdleConnections()
-		e.remote = nil
-	}
-	if e.session != nil {
-		_ = e.session.Close()
-		e.session = nil
-	}
-	e.tools = nil
-	if e.process != nil {
-		e.process.Close()
+	g.dropCurrent(e)
+	for session, r := range e.retired {
+		delete(e.retired, session)
+		g.closeConn(session, r.remote, r.process)
 	}
 	e.gate <- struct{}{}
 }
@@ -347,6 +393,7 @@ func (g *Gateway) Close() {
 	for _, e := range entries {
 		g.invalidate(e)
 	}
+	g.closing.Wait()
 }
 func (g *Gateway) tools(ctx context.Context, name string, refresh bool) ([]*mcp.Tool, *entry, error) {
 	e, err := g.get(ctx, name)
@@ -367,8 +414,8 @@ func (g *Gateway) tools(ctx context.Context, name string, refresh bool) ([]*mcp.
 	cursor := ""
 	seen := map[string]bool{}
 	for {
-		res, err := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.ListToolsResult, error) {
-			return s.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+		res, err := operation(g, ctx, name, "list", func(c context.Context, s *mcp.ClientSession) (*mcp.ListToolsResult, error) {
+			return s.ListTools(c, &mcp.ListToolsParams{Cursor: cursor})
 		})
 		if err != nil {
 			return nil, nil, err
@@ -440,7 +487,9 @@ func (g *Gateway) invoke(ctx context.Context, name, tool string, args map[string
 	}
 	params := &mcp.CallToolParams{Name: tool, Arguments: args}
 	params.SetProgressToken(id)
-	res, err := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.CallToolResult, error) { return s.CallTool(ctx, params) })
+	res, err := operation(g, ctx, name, "tool", func(c context.Context, s *mcp.ClientSession) (*mcp.CallToolResult, error) {
+		return s.CallTool(c, params)
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			return failure(499, "CANCELLED")
@@ -468,6 +517,9 @@ func has(values []string, want string) bool {
 func errorResponse(ctx context.Context, e error) Response {
 	if ctx.Err() != nil {
 		return failure(499, "CANCELLED")
+	}
+	if be, ok := e.(*Error); ok && be.status != 0 {
+		return Response{be.status, map[string]string{"Content-Type": "application/json"}, map[string]any{"ok": false, "error": be}}
 	}
 	switch e.Error() {
 	case "SERVER_NOT_FOUND":

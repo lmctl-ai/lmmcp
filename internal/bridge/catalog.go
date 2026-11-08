@@ -29,8 +29,8 @@ func (g *Gateway) catalog(ctx context.Context, name, kind string) Response {
 	switch kind {
 	case "resources":
 		v, e := pages(func(cursor string) ([]*mcp.Resource, string, error) {
-			r, e := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.ListResourcesResult, error) {
-				return s.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
+			r, e := operation(g, ctx, name, "list", func(c context.Context, s *mcp.ClientSession) (*mcp.ListResourcesResult, error) {
+				return s.ListResources(c, &mcp.ListResourcesParams{Cursor: cursor})
 			})
 			if e != nil {
 				return nil, "", e
@@ -43,8 +43,8 @@ func (g *Gateway) catalog(ctx context.Context, name, kind string) Response {
 		return g.Safe(success(v))
 	case "templates":
 		v, e := pages(func(cursor string) ([]*mcp.ResourceTemplate, string, error) {
-			r, e := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.ListResourceTemplatesResult, error) {
-				return s.ListResourceTemplates(ctx, &mcp.ListResourceTemplatesParams{Cursor: cursor})
+			r, e := operation(g, ctx, name, "list", func(c context.Context, s *mcp.ClientSession) (*mcp.ListResourceTemplatesResult, error) {
+				return s.ListResourceTemplates(c, &mcp.ListResourceTemplatesParams{Cursor: cursor})
 			})
 			if e != nil {
 				return nil, "", e
@@ -57,8 +57,8 @@ func (g *Gateway) catalog(ctx context.Context, name, kind string) Response {
 		return g.Safe(success(v))
 	case "prompts":
 		v, e := pages(func(cursor string) ([]*mcp.Prompt, string, error) {
-			r, e := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.ListPromptsResult, error) {
-				return s.ListPrompts(ctx, &mcp.ListPromptsParams{Cursor: cursor})
+			r, e := operation(g, ctx, name, "list", func(c context.Context, s *mcp.ClientSession) (*mcp.ListPromptsResult, error) {
+				return s.ListPrompts(c, &mcp.ListPromptsParams{Cursor: cursor})
 			})
 			if e != nil {
 				return nil, "", e
@@ -76,8 +76,8 @@ func (g *Gateway) read(ctx context.Context, name, uri string) Response {
 	if uri == "" {
 		return failure(400, "URI_REQUIRED")
 	}
-	r, e := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.ReadResourceResult, error) {
-		return s.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	r, e := operation(g, ctx, name, "resource", func(c context.Context, s *mcp.ClientSession) (*mcp.ReadResourceResult, error) {
+		return s.ReadResource(c, &mcp.ReadResourceParams{URI: uri})
 	})
 	if e != nil {
 		return errorResponse(ctx, e)
@@ -85,8 +85,8 @@ func (g *Gateway) read(ctx context.Context, name, uri string) Response {
 	return g.Safe(success(r))
 }
 func (g *Gateway) prompt(ctx context.Context, name, prompt string, args map[string]string) Response {
-	r, e := operation(g, ctx, name, func(s *mcp.ClientSession) (*mcp.GetPromptResult, error) {
-		return s.GetPrompt(ctx, &mcp.GetPromptParams{Name: prompt, Arguments: args})
+	r, e := operation(g, ctx, name, "prompt", func(c context.Context, s *mcp.ClientSession) (*mcp.GetPromptResult, error) {
+		return s.GetPrompt(c, &mcp.GetPromptParams{Name: prompt, Arguments: args})
 	})
 	if e != nil {
 		return errorResponse(ctx, e)
