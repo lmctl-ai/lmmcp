@@ -215,6 +215,9 @@ func operation[T any](g *Gateway, ctx context.Context, name string, fn func(*mcp
 	for attempt := 0; attempt < 2; attempt++ {
 		e, err := g.get(ctx, name)
 		if err != nil {
+			if attempt > 0 {
+				return zero, bad("SESSION_REINITIALIZE_FAILED")
+			}
 			return zero, err
 		}
 		<-e.gate

@@ -82,7 +82,7 @@ func TestBuilderPreloadAndOrder(t *testing.T) {
 	os.WriteFile(copyFile, raw, 0600)
 	invocation(t, true, []map[string]any{{"index": 0, "file": file}, {"index": 1, "file": copyFile}})
 	out.Reset()
-	if code := Run([]string{copyFile, file}, context.Background(), g, &out); code != 0 || !strings.Contains(out.String(), `"mode":"builder"`) {
+	if code := Run([]string{copyFile, file}, context.Background(), g, &out); code != 0 || !strings.Contains(out.String(), `"parts":2`) {
 		t.Fatal(code, out.String())
 	}
 }

@@ -299,6 +299,7 @@ func (g *Gateway) invalidate(e *entry) {
 	<-e.gate
 	if e.remote != nil {
 		e.remote.cancel()
+		e.remote.base.CloseIdleConnections()
 		e.remote = nil
 	}
 	if e.session != nil {

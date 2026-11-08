@@ -119,19 +119,27 @@ func TestReleasedCancelAndChanged(t *testing.T) {
 			if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status != 200 {
 				t.Fatal(r)
 			}
+			previous := g.entries["r"].session
 			control(t, base, "/__mock/list-changed", `{}`)
 			for e := range events {
 				if e.Kind == "list_changed" {
 					break
 				}
 			}
+			if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status != 200 || g.entries["r"].session == previous {
+				t.Fatal("list change did not refresh session", r)
+			}
 			done := make(chan Response, 1)
 			go func() {
 				done <- g.Dispatch(context.Background(), Request{ID: "slow", Method: "POST", Path: "/v1/servers/r/tools/slow/call", Body: json.RawMessage(`{}`)})
 			}()
-			for e := range events {
-				if e.Kind == "progress" {
-					break
+			progressReady := false
+			for !progressReady {
+				select {
+				case event := <-events:
+					progressReady = event.Kind == "progress"
+				case response := <-done:
+					t.Fatalf("slow completed before progress: %#v", response)
 				}
 			}
 			if r := request(g, "DELETE", "/v1/requests/slow", ""); r.Status != 200 {

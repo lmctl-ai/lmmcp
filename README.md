@@ -1,92 +1,138 @@
 # lmmcp
 
-A small Go bridge from configured MCP stdio servers to REST, JSON-lines REST,
-and a CLI. Development uses loopback mock servers only. This private repository
-has no CI or release pipeline yet.
+One Go binary exposes configured MCP servers through REST, a CLI and JSON-lines
+REST over stdio. It supports stdio, Streamable HTTP and legacy HTTP+SSE MCP.
+Development and tests use loopback mocks only; the operator configures real servers.
+This repository is private for now: no workflows, CI dispatches or releases.
 
-Build with Go 1.25 or newer:
+## Quickstart for an LLM or script
 
-```console
-go build ./cmd/lmmcp
-go vet ./...
-go test -race ./...
-```
-
-Use an existing `mcpServers` configuration:
+Build with Go 1.26 or newer (`CGO_ENABLED=0 go build ./cmd/lmmcp`). Existing
+`mcpServers` configurations work. For a local MCP process:
 
 ```json
-{"mcpServers":{"example":{"command":"/absolute/path/to/mcp-server","args":[],"env":{"API_KEY":"${EXAMPLE_KEY}"},"envAllowlist":["PATH"]}}}
+{"mcpServers":{"fixture":{"command":"/absolute/path/to/mcp-server","args":[],"envAllowlist":["PATH"]}}}
 ```
 
-Commands start upstreams lazily. `servers` only reads configuration; `tools` and
-`call` connect when needed. The default inherited environment is PATH alone;
-`envAllowlist: []` inherits nothing. Explicit `${NAME}` references read only that
-variable. Keep secrets out of literal configuration values. Configure real
-servers yourself; the project tests never use real credentials.
+For the released lmmock MCP example, or another explicitly configured remote:
+
+```json
+{"mcpServers":{"fixture":{"url":"http://127.0.0.1:8081/mcp","type":"http","protocolVersion":"2026-07-28"}}}
+```
+
+`protocolVersion` is optional. `type` (or `transport`) accepts `http`,
+`streamable-http`, `sse` or `auto`. Legacy SSE uses a URL ending in `/sse` and
+revision `2024-11-05`. A 2025 Streamable HTTP server can explicitly select
+`2025-11-25`. `auto` tries POST initialize, then `/sse` only on a non-auth 4xx;
+ordinary `http` never silently falls back to legacy SSE.
 
 ```console
 lmmcp servers --config config.json
-lmmcp tools example --config config.json
-lmmcp call example echo --json '{"text":"hello"}' --config config.json
-lmmcp call example echo --arg text=hello --config config.json
-lmmcp serve --config config.json --listen 127.0.0.1:8080 --token-env BRIDGE_TOKEN
-lmmcp tools example --url http://127.0.0.1:8080 --token-env BRIDGE_TOKEN
+lmmcp tools fixture --config config.json
+lmmcp call fixture echo --arg text=hello --config config.json
+lmmcp call fixture add --json '{"left":2,"right":3}' --config config.json
+lmmcp resources fixture --config config.json
+lmmcp read fixture mock://blob --config config.json
+lmmcp templates fixture --config config.json
+lmmcp prompts fixture --config config.json
+lmmcp prompt fixture greet --arg name=Ada --config config.json
+lmmcp serve --config config.json --listen 127.0.0.1:8080
+```
+
+The same client commands accept `--url http://127.0.0.1:8080` instead of
+`--config`. `--arg` supplies literal strings; `--json` supplies typed values.
+They cannot be combined. Prompts require string argument values.
+
+```console
+curl http://127.0.0.1:8080/v1/servers/fixture/tools
+curl --json '{"text":"hello"}' http://127.0.0.1:8080/v1/servers/fixture/tools/echo/call
+curl 'http://127.0.0.1:8080/v1/servers/fixture/resources/read?uri=mock%3A%2F%2Fblob'
 lmmcp openapi
 ```
 
-`--arg` supplies string values; use `--json` for typed arguments. Do not combine
-them. Client commands print one JSON document. Success is `{ok:true,data:...}`;
-failure is `{ok:false,error:{code,message}}`. Exit codes: 0 success, 2 invalid
-request/configuration, 3 server/tool/policy/authentication failure, 4 cancellation.
-Long-lived `serve` prints its listening address once; progress/lifecycle events
-are JSON on stderr. `--version` prints JSON.
+The OpenAPI document is also served at `/v1/openapi.json`. Other routes:
+`/health`, `/v1/servers`, `/v1/servers/{server}/resources`,
+`/resources/templates`, `/prompts`, and POST `/prompts/{prompt}` with a string
+argument object. Resource blobs preserve base64 plus MIME type. Tool results
+preserve `structuredContent` beside text content and the discovery `outputSchema`.
 
-REST routes:
+Results are `{ok:true,data:...}` or `{ok:false,error:{code,message}}`. MCP `isError`
+is HTTP **200** with `ok:false`, `error.code:TOOL_ERROR` and the original MCP
+result in `data`; the CLI exits **3**. This lets a caller distinguish tool failure
+from transport failure. Known-secret suppression overrides content preservation.
+CLI exits: 0 success, 2 invalid request/config, 3 tool/upstream/auth/policy error,
+4 cancellation. Each client action prints one JSON document. Progress and
+lifecycle/list-change events are typed JSON on stderr. `--version` prints JSON.
 
-| Method | Path | Body |
-| --- | --- | --- |
-| GET | `/health` | — |
-| GET | `/v1/openapi.json` | — |
-| GET | `/v1/servers` | — |
-| GET | `/v1/servers/{server}/tools` | — |
-| POST | `/v1/servers/{server}/tools/{tool}/call` | tool argument object |
-| DELETE | `/v1/requests/{id}` | — |
+Use `X-Request-ID` to name an HTTP request; DELETE `/v1/requests/{id}` cancels it.
+HTTP disconnect and Ctrl-C propagate MCP cancellation. Session-bearing POST 404
+allows one re-initialization retry; a second expiry is `SESSION_EXPIRED`, failed
+re-initialization is `SESSION_REINITIALIZE_FAILED`. Other errors do not replay calls.
+List changes refresh the session/SDK caches before next use. An optional 2025 GET
+notification stream never blocks initialization waiting for its first event.
 
-Set `X-Request-ID` to correlate a request and explicitly cancel it. A disconnected
-HTTP client or Ctrl-C cancels its MCP call. No implicit call deadline, response
-truncation, frame ceiling or retry replay is added. Tool errors omit upstream
-error strings. Normal tool results preserve MCP content and schemas.
+## JSON-lines REST and lmcode
+
+`lmmcp stdio --config config.json` reads one request per line:
+`{"id":"r1","method":"GET","path":"/v1/servers","query":{},"body":null}`.
+It writes `{id,status,headers,body}` replies, correlated by string/nonnegative
+integer id; concurrent replies may arrive out of order. Cancel using another
+line with DELETE `/v1/requests/r1`. EOF drains work; Ctrl-C/broken output cancels.
+This is REST semantics over stdio, not an MCP server endpoint.
+
+The lmcode host accepts `--lmcode-schema [--json]`, `--lmcode-signatures` and
+repeatable `--lmcode FILE --config config.json`. Global functions:
+`mcp_servers()`, `mcp_tools(server)`, `mcp_call(server,tool,Json)`,
+`mcp_resources(server)`, `mcp_templates(server)`, `mcp_read(server,uri)`,
+`mcp_prompts(server)`, `mcp_prompt(server,name,Json)`. `mcp_server(name)` returns
+an `MCPServer` with matching methods. Json results carry the REST envelope.
+Invocation manifest v1, dry, result sinks and terminal LMCODE_RETURN frames use
+the pinned Go SDK. All builder parts load before activation. Host exits follow
+SDK categories: 0 success, 2 metadata/CLI, 3 load/VM, 4 application failure.
+A completed program can inspect a tool-error envelope; return status follows
+program completion, while the ordinary `call` CLI exits 3 for `isError`.
+
+[examples/tools.lms](examples/tools.lms) lists tools and calls the echo fixture
+through `run_lmcode`. Put your built lmmcp on PATH and pass its configuration:
 
 ```console
-lmmcp stdio --config config.json
+npm install --prefix /absolute/private/compiler @lmctl-ai/lmctl --no-audit --no-fund
+/absolute/private/compiler/node_modules/.bin/lmscript --check examples/tools.lms
+/absolute/private/compiler/node_modules/.bin/lmscript examples/tools.lms /absolute/config.json
 ```
 
-In JSON-lines mode each input line is
-`{"id":"r1","method":"GET","path":"/v1/servers","query":{},"body":null}`.
-Each output line is `{"id":"r1","status":200,"headers":{},"body":...}`.
-Requests run concurrently, so correlate replies by id. IDs may also be
-nonnegative integer tokens. Cancel with another request line whose method is
-DELETE and path `/v1/requests/r1`. EOF drains submitted work; Ctrl-C or broken
-output cancels it. This protocol is REST over stdio, not an MCP server transport.
+Dry host calls return action previews, start no process or connection, read no
+credential env values and write no files. Resource callbacks reject null receivers
+with a structured error. Dry does not simulate an MCP server.
 
-The listener accepts literal loopback addresses only. Optional bearer auth uses
-`--token-env NAME` or `--token-file FILE`, never a token argument. Browser Origins,
-incorrect Host headers, URL credentials and client redirects are refused.
-`--read-only` requires MCP readOnlyHint=true with no destructiveHint=true;
-annotations are hints, not a security sandbox. Per-server `allowTools` and
-`denyTools` are exact tool names; deny wins and an explicit empty allow list
-allows none.
+## Security and verification
 
-Child stderr is discarded rather than exposing unknown secrets. Known referenced
-environment values and the bearer token are blocked from serialized responses;
-this is not general data-loss prevention. Only explicitly configured executables
-are trusted. Shutdown terminates/reaps owned processes and inherited process
-groups; intentionally detached daemons are outside this slice's containment.
+Bind literal loopback only. Optional REST bearer auth uses `--token-env NAME` or
+`--token-file FILE`, never a token value in argv. Remote config headers must use
+`${NAME}` references, for example `"Authorization":"Bearer ${MOCK_MCP_TOKEN}"`;
+no raw credential literals. Reserved MCP headers cannot be overridden. URLs
+reject userinfo, query strings and fragments; plaintext requires literal loopback.
+Redirects and cross-origin legacy endpoints are refused. Host/Origin checks
+prevent browser cross-origin access; no CORS.
 
-Resources/prompts forwarding, remote HTTP/SSE MCP upstreams, an lmcode host and
-public releases are subsequent slices. Remote config entries are recognized but
-return an explicit unsupported error without connecting. See [design](docs/DESIGN.md).
+Stdio inherits PATH only by default; `envAllowlist: []` inherits nothing. Parsed
+`${NAME}` env references read only that variable. Literal env values are for
+nonsecret settings. Child stderr is discarded and upstream error strings omitted.
+Known referenced env values/bearer tokens are blocked from serialized results;
+this is not general DLP. `allowTools`/`denyTools` contain exact names, deny wins,
+and empty allow permits none. `--read-only` requires readOnlyHint=true without
+destructiveHint=true; annotations are untrusted hints, not a sandbox.
 
-Reproducible controls live in `scripts/mutations.py` (20 production-copy mutants)
-and `scripts/e2e.py` (built CLI plus SDK mock, Linux process-identity checks).
-Both accept explicit evidence paths and use only synthetic credentials.
+No call deadline, response truncation, frame/event ceiling or retry sleep is
+added. SDK automatic reconnect delays are disabled. Shutdown terminates/reaps
+owned children and inherited Unix process groups / Windows taskkill trees.
+Deliberately detached daemons remain outside this slice's trusted-command scope.
+
+Local gates: `go vet ./...`, `go test -race ./...`, five CGO-disabled cross-builds.
+`go test -tags integration ./...` additionally requires `LMMCP_TEST_LMMOCK` pointing
+to the SHA-256-verified lmmock v0.1.110 asset and `LMMCP_TEST_PROGRAM` to its compiled
+`examples/mcp/server.lms`. The integration fixture explicitly sets JSON/SSE mode
+through `/__mock/reply-mode`; its config `replyMode` alone has no effect.
+`scripts/mutations-slice2.py` and `scripts/remote-e2e.py` reproduce adversarial and
+actual CLI/lmscript checks. See [short design](docs/DESIGN.md). Public packaging,
+release plumbing and native Windows/macOS qualification are separate work.

@@ -1,11 +1,15 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -70,7 +74,7 @@ func TestRemoteSurfaces(t *testing.T) {
 }
 func TestRemoteConfigPolicy(t *testing.T) {
 	for _, raw := range []string{
-		`{"url":"http://example.com/mcp"}`, `{"url":"http://user:pass@127.0.0.1/mcp"}`, `{"url":"http://127.0.0.1/mcp","headers":{"Authorization":"Bearer literal"}}`, `{"url":"http://127.0.0.1/mcp","type":"typo"}`, `{"url":"http://127.0.0.1/mcp","type":"sse","transport":"auto"}`, `{"url":"http://127.0.0.1/mcp","headers":{"Content-Type":"${BAD}"}}`,
+		`{"url":"http://example.com/mcp"}`, `{"url":"http://192.0.2.1/mcp"}`, `{"url":"http://user:pass@127.0.0.1/mcp"}`, `{"url":"http://127.0.0.1/mcp","headers":{"Authorization":"Bearer literal"}}`, `{"url":"http://127.0.0.1/mcp","type":"typo"}`, `{"url":"http://127.0.0.1/mcp","type":"sse","transport":"auto"}`, `{"url":"http://127.0.0.1/mcp","headers":{"Content-Type":"${BAD}"}}`,
 	} {
 		if _, e := Load([]byte(`{"mcpServers":{"r":` + raw + `}}`)); e == nil {
 			t.Fatal(raw)
@@ -105,5 +109,113 @@ func TestRemoteAuthAndNoRedirect(t *testing.T) {
 	}
 	if received.Load() != 0 {
 		t.Fatal("credential redirect")
+	}
+}
+
+func TestRemoteLargeEvent(t *testing.T) {
+	g, s := remoteFixture(t, false)
+	text := strings.Repeat("z", 17<<20)
+	s.AddTool(&mcp.Tool{Name: "large", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+	})
+	r := request(g, "POST", "/v1/servers/remote/tools/large/call", `{}`)
+	b, _ := json.Marshal(r.Body)
+	if r.Status != 200 || !strings.Contains(string(b), text) {
+		t.Fatal("large SSE result incomplete", r.Status)
+	}
+}
+func TestRemoteHeaderBeforeNetwork(t *testing.T) {
+	var hits atomic.Int64
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); w.WriteHeader(500) }))
+	defer s.Close()
+	for _, value := range []string{"a\rb", "a\nb", "a\x00b"} {
+		g, _ := New(Config{Servers: map[string]ServerConfig{"r": {URL: s.URL, Headers: map[string]string{"Authorization": "${KEY}"}}}}, Options{Lookup: func(string) (string, bool) { return value, true }})
+		r := request(g, "GET", "/v1/servers/r/tools", "")
+		b, _ := json.Marshal(r.Body)
+		if r.Status != 502 || !strings.Contains(string(b), "INVALID_HEADER") {
+			t.Fatal(r)
+		}
+		g.Close()
+	}
+	if hits.Load() != 0 {
+		t.Fatal("invalid header reached network")
+	}
+}
+func TestCatalogInvalidArguments(t *testing.T) {
+	g, _ := remoteFixture(t, true)
+	for _, r := range []Request{{Method: "GET", Path: "/v1/servers/remote/resources/read"}, {Method: "GET", Path: "/v1/servers/remote/resources/read", Query: map[string]string{"uri": ""}}, {Method: "POST", Path: "/v1/servers/remote/prompts/greet", Body: json.RawMessage(`{"name":1}`)}, {Method: "POST", Path: "/v1/servers/remote/prompts/greet", Body: json.RawMessage(`null`)}} {
+		if x := g.Dispatch(context.Background(), r); x.Status != 400 {
+			t.Fatal(x)
+		}
+	}
+}
+func TestOpenAPISlice2(t *testing.T) {
+	paths := OpenAPI()["paths"].(map[string]any)
+	for _, p := range []string{"/v1/servers/{server}/resources", "/v1/servers/{server}/resources/read", "/v1/servers/{server}/resources/templates", "/v1/servers/{server}/prompts", "/v1/servers/{server}/prompts/{prompt}"} {
+		if paths[p] == nil {
+			t.Fatal(p)
+		}
+	}
+}
+
+func TestRemoteOriginHop(t *testing.T) {
+	var hits atomic.Int64
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); w.WriteHeader(200) }))
+	defer s.Close()
+	u, _ := url.Parse("http://127.0.0.1:1")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	state := remoteState{ctx: ctx, origin: u, base: &http.Transport{}, headers: http.Header{"Authorization": []string{"Bearer synthetic"}}}
+	req, _ := http.NewRequest("GET", s.URL, nil)
+	r, e := state.RoundTrip(req)
+	if e == nil {
+		r.Body.Close()
+		t.Fatal("origin change accepted")
+	}
+	if hits.Load() != 0 {
+		t.Fatal("credential origin hop")
+	}
+}
+func TestRemoteRetryOnce(t *testing.T) {
+	for _, failInit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "expired-twice", true: "reinitialize-fails"}[failInit], func(t *testing.T) {
+			var initializations atomic.Int64
+			s := mcp.NewServer(&mcp.Implementation{Name: "retry", Version: "1"}, nil)
+			h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{JSONResponse: true})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" {
+					b, _ := io.ReadAll(r.Body)
+					r.Body = io.NopCloser(bytes.NewReader(b))
+					var message struct {
+						Method string `json:"method"`
+					}
+					json.Unmarshal(b, &message)
+					if message.Method == "initialize" {
+						n := initializations.Add(1)
+						if failInit && n > 1 {
+							w.WriteHeader(403)
+							return
+						}
+					}
+					if message.Method == "tools/list" {
+						w.WriteHeader(404)
+						return
+					}
+				}
+				h.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			g, _ := New(Config{Servers: map[string]ServerConfig{"r": {URL: server.URL, ProtocolVersion: "2025-11-25"}}}, Options{})
+			defer g.Close()
+			r := request(g, "GET", "/v1/servers/r/tools", "")
+			b, _ := json.Marshal(r.Body)
+			want := "SESSION_EXPIRED"
+			if failInit {
+				want = "SESSION_REINITIALIZE_FAILED"
+			}
+			if r.Status != 502 || !strings.Contains(string(b), want) || initializations.Load() != 2 {
+				t.Fatal(r, string(b), initializations.Load())
+			}
+		})
 	}
 }
