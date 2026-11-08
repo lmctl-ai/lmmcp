@@ -524,7 +524,13 @@ func TestProtectScansKeysAndPaginationCyclesAreRefused(t *testing.T) {
 	if !strings.Contains(body(r), "SECRET_OUTPUT") {
 		t.Fatal("secret used as an object key was returned")
 	}
-	_, e := pages(func(cursor string) ([]int, string, error) { return []int{1}, "same", nil })
+	calls := 0
+	_, e := pages(func(cursor string) ([]int, string, error) {
+		if calls++; calls > 50 {
+			return nil, "", bad("TEST_CYCLE_NOT_DETECTED")
+		}
+		return []int{1}, "same", nil
+	})
 	if e == nil || e.Error() != "INVALID_PAGINATION" {
 		t.Fatalf("cursor cycle: %v", e)
 	}

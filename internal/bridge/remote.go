@@ -374,8 +374,10 @@ func operation[T any](g *Gateway, ctx context.Context, name, kind string, fn fun
 			return zero, bad("CANCELLED")
 		}
 		dead := errors.Is(err, mcp.ErrSessionMissing)
-		if dead || errors.Is(err, mcp.ErrConnectionClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) {
-			g.markBroken(e, s) // only a session that cannot carry work is replaced, never because of an MCP error
+		if mapRPC(err, kind) == nil {
+			// A transport-level failure leaves the SDK connection unusable (it is terminal there); the session is
+			// replaced for new work. An MCP application error (a JSON-RPC error answer) never replaces it.
+			g.markBroken(e, s)
 		}
 		resend := r != nil && trace.mayResend(dead)
 		failure := classify(err, r, trace, kind)

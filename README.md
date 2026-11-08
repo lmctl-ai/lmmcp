@@ -7,8 +7,10 @@ This repository is private for now: no workflows, CI dispatches or releases.
 
 ## Quickstart for an LLM or script
 
-Build with Go 1.26 or newer (`CGO_ENABLED=0 go build ./cmd/lmmcp`). Existing
-`mcpServers` configurations work. For a local MCP process:
+Build with Go 1.26 or newer (`CGO_ENABLED=0 go build ./cmd/lmmcp`). Standard
+`mcpServers` entries (`command`/`args`/`env`/`cwd`, or `url`/`headers`) work; keys
+other clients add (`timeout`, `autoApprove`, `type:"streamableHttp"`) and literal
+header values are refused with a specific error code. For a local MCP process:
 
 ```json
 {"mcpServers":{"fixture":{"command":"/absolute/path/to/mcp-server","args":[],"envAllowlist":["PATH"]}}}
@@ -113,8 +115,13 @@ Bind literal loopback only. Optional REST bearer auth uses `--token-env NAME` or
 `--token-file FILE`, never a token value in argv. Remote config headers must use
 `${NAME}` references, for example `"Authorization":"Bearer ${MOCK_MCP_TOKEN}"`;
 no raw credential literals. Reserved MCP headers cannot be overridden. URLs
-reject userinfo, query strings and fragments; plaintext requires literal loopback.
-Redirects and cross-origin legacy endpoints are refused. Host/Origin checks
+reject userinfo, query strings, fragments and bad ports; plaintext requires a literal
+loopback IP. Redirects and cross-origin legacy endpoints are refused, proxy
+environment variables are ignored, and link-local/cloud-metadata destinations
+(169.254.0.0/16, fe80::/10, fd00:ec2::254, unspecified) are refused for every server,
+including after DNS resolution. `"allowPrivateAddresses":false` on a remote server
+also refuses RFC 1918/CGNAT/ULA and loopback destinations (table in
+[docs/DESIGN.md](docs/DESIGN.md)). Host/Origin checks
 prevent browser cross-origin access; no CORS.
 
 Stdio inherits PATH only by default; `envAllowlist: []` inherits nothing. Parsed
@@ -134,8 +141,12 @@ Deliberately detached daemons remain outside this slice's trusted-command scope.
 
 Local gates: `go vet ./...`, `CGO_ENABLED=1 go test -race ./...` (requires a C compiler on `PATH` or `CC`), five CGO-disabled cross-builds.
 `go test -tags integration ./...` additionally requires `LMMCP_TEST_LMMOCK` pointing
-to the SHA-256-verified lmmock v0.1.110 asset and `LMMCP_TEST_PROGRAM` to its compiled
-`examples/mcp/server.lms`. The integration fixture explicitly sets JSON/SSE mode
+to the SHA-256-verified lmmock v0.1.111 asset and `LMMCP_TEST_PROGRAM` to its compiled
+`examples/mcp/server.lms`; `scripts/prepare-mock.sh v0.1.111 /absolute/private/dir`
+downloads, verifies and compiles both and prints the `export` lines. The remote
+lmscript cells run as `lmmock exec --lmcode PROGRAM --config '{"protocolVersion":V}'
+-- python3 scripts/remote-e2e.py --binary lmmcp --lmscript LMSCRIPT --mode json|sse
+--version V`. The integration fixture explicitly sets JSON/SSE mode
 through `/__mock/reply-mode`; its config `replyMode` alone has no effect.
 `scripts/mutations-slice2.py` and `scripts/remote-e2e.py` reproduce adversarial and
 actual CLI/lmscript checks. See [short design](docs/DESIGN.md). Public packaging,

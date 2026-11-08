@@ -25,6 +25,9 @@ func mapRPC(err error, kind string) *Error {
 		return nil
 	}
 	code := int(we.Code)
+	if code == -32004 || code == -32005 {
+		return nil // the SDK's own "connection is closing" / "rejected by transport": a local transport failure
+	}
 	message := strings.ToLower(we.Message)
 	missing := strings.Contains(message, "not found") || strings.Contains(message, "unknown")
 	switch {

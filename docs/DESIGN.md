@@ -44,19 +44,37 @@ Parsed ${NAME} references grant lookup of that name only. Remote entries use url
 headers and type or transport: http/streamable-http (default), sse, auto.
 Optional protocolVersion selects 2026-07-28, 2025-11-25 or 2024-11-05.
 Headers require ${NAME} references (a literal Bearer prefix is allowed), reject
-CR/LF and protocol-reserved names; no argv credentials. URLs reject userinfo,
-query credentials and fragments; plaintext requires a literal loopback address.
-Redirects and cross-origin legacy endpoint forwarding are refused.
+CR/LF and protocol-reserved names; no argv credentials. Unknown keys are refused, so
+entries with `timeout`, `autoApprove`, `type:"streamableHttp"` or literal headers
+from other clients must be adapted. URLs reject userinfo, query, fragment, a bad
+port and NUL; redirects, userinfo or cross-origin endpoint events are refused. Proxy
+environment variables are ignored on purpose. Destination policy (checked on the
+literal host and again for every resolved address at dial time):
+
+| Destination | Default | `allowPrivateAddresses:false` |
+| --- | --- | --- |
+| link-local 169.254.0.0/16 and fe80::/10 (cloud metadata), fd00:ec2::254, 0.0.0.0, :: | refused | refused |
+| RFC 1918, 100.64.0.0/10, fc00::/7 | https allowed | refused |
+| loopback | https allowed; literal-IP http allowed | https/DNS refused; literal-IP http allowed |
+| public address or DNS name | https allowed | https allowed |
+| other plain http | refused | refused |
 
 One lazy session/server. SDK StreamableClientTransport/SSEClientTransport own MCP;
 reconnect delays are disabled and event ceilings explicitly -1. Auto alone tries
 POST initialize then /sse on 4xx, excluding 401/403 (authentication is not discovery).
-A session-bearing POST 404 permits one re-initialization and retry; unrelated errors
-never replay calls. List changes discard the session and its SDK caches before
-next idle use; active calls finish before a generation is rotated. The 2025 optional GET notification stream is read asynchronously so a
-peer that delays SSE headers cannot block initialization. No retry sleeps, call
-deadlines, output quotas or truncation. Teardown requests use our lifetime context,
-not the SDK's fixed DELETE deadline; cancellation ends owned reads/connections.
+Retry is decided per call from its own trace, never from shared state: a call may be
+sent again once, and only if nothing was written (its session had already failed)
+or its own POST was answered 404 for the session id. A call whose request was
+written is never re-sent. JSON-RPC errors become typed REST errors with `mcpCode`
+(404 RESOURCE_NOT_FOUND/PROMPT_NOT_FOUND, 400 INVALID_PARAMS, 502 for internal or
+server-defined errors) and never replace the session. A session is replaced only
+when it cannot carry work (missing, closed) and never under running calls: it is
+retired and closed by its last user. List changes rotate the session on next idle
+use. The optional 2025 GET stream is read in fixed slices, keeping only one event's
+classification window, so memory is flat however long a line or event is. No retry
+sleeps, call deadlines, output quotas or truncation. The session DELETE (and
+notifications/cancelled) is sent before the lifetime context ends and has no
+deadline; a second shutdown signal aborts it.
 
 Stdio uses IOTransport MaxLineLength=-1 rather than CommandTransport's fixed
 shutdown escalation/frame ceiling. Shutdown closes pipes, terminates/reaps owned
@@ -82,7 +100,7 @@ read/prompts/prompt and an MCPServer wrapper use the same dispatcher. Dry return
 nonsecret action previews and starts no process, connection or env lookup. Host
 exit categories follow SDK 0 success/2 metadata/3 load-or-VM/4 application.
 
-Tests use SDK fixtures and SHA-256-verified released lmmock v0.1.110: three
+Tests use SDK fixtures and SHA-256-verified released lmmock v0.1.111: three
 transports, JSON/SSE, resources text/blob, prompts, schema/structured results,
 cancellation, progress, expiry, auth and changes. Test assertions, mutations,
 race/vet, five cross-builds and actual lmscript execution gate this slice locally.

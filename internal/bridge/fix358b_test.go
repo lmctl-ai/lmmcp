@@ -1,11 +1,15 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -177,4 +181,99 @@ func TestCancelNotificationDeliveredLegacySSEAndStreamable(t *testing.T) {
 			t.Fatal("legacy SSE server never received notifications/cancelled")
 		}
 	})
+}
+
+// An authentication status belongs to the call that received it; it never colours a later, unrelated failure.
+func TestAuthStatusIsPerCall(t *testing.T) {
+	var mode atomic.Value
+	mode.Store("")
+	s := newStub(t)
+	inner := s.srv.Config.Handler
+	s.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			b, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(b))
+			if strings.Contains(string(b), `"name":"echo"`) {
+				switch mode.Load().(string) {
+				case "401":
+					w.WriteHeader(401)
+					return
+				case "403":
+					w.WriteHeader(403)
+					return
+				case "reset":
+					conn, _, _ := w.(http.Hijacker).Hijack()
+					conn.Close()
+					return
+				}
+			}
+		}
+		inner.ServeHTTP(w, r)
+	})
+	g := s.gateway(t, nil)
+	if r := request(g, "GET", "/v1/servers/r/tools", ""); r.Status != 200 {
+		t.Fatal(body(r))
+	}
+	for m, want := range map[string]string{"401": "UPSTREAM_UNAUTHORIZED", "403": "UPSTREAM_FORBIDDEN"} {
+		mode.Store(m)
+		r := request(g, "POST", "/v1/servers/r/tools/echo/call", `{}`)
+		if !strings.Contains(body(r), want) {
+			t.Fatalf("%s: %s", m, body(r))
+		}
+	}
+	mode.Store("reset")
+	if r := request(g, "POST", "/v1/servers/r/tools/echo/call", `{}`); !strings.Contains(body(r), "UPSTREAM_FAILED") {
+		t.Fatalf("an earlier 403 mislabelled a later transport failure: %s", body(r))
+	}
+}
+
+// type:auto tries POST initialize first and falls back to /sse only on a non-auth 4xx. Asserted against a stub so the
+// check does not depend on how a particular released mock answers a 2024-11-05 client.
+func TestAutoFallsBackToLegacySSEOnlyOnNonAuth4xx(t *testing.T) {
+	for _, status := range []int{404, 405, 401, 403} {
+		out := make(chan string, 8)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) })
+		mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(200)
+			w.Write([]byte("event: endpoint\ndata: /messages?s=1\n\n"))
+			w.(http.Flusher).Flush()
+			for {
+				select {
+				case m := <-out:
+					w.Write([]byte("event: message\ndata: " + m + "\n\n"))
+					w.(http.Flusher).Flush()
+				case <-r.Context().Done():
+					return
+				}
+			}
+		})
+		mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+			var m struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+			}
+			json.NewDecoder(r.Body).Decode(&m)
+			w.WriteHeader(202)
+			switch m.Method {
+			case "initialize":
+				out <- `{"jsonrpc":"2.0","id":` + string(m.ID) + `,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"s","version":"1"}}}`
+			case "tools/list":
+				out <- `{"jsonrpc":"2.0","id":` + string(m.ID) + `,"result":{"tools":[]}}`
+			}
+		})
+		server := httptest.NewServer(mux)
+		g, _ := New(Config{Servers: map[string]ServerConfig{"r": {URL: server.URL + "/mcp", Type: "auto"}}}, Options{})
+		r := request(g, "GET", "/v1/servers/r/tools", "")
+		g.Close()
+		server.Close()
+		fallback := status == 404 || status == 405
+		if fallback && r.Status != 200 {
+			t.Errorf("%d: no fallback to /sse: %s", status, body(r))
+		}
+		if !fallback && r.Status == 200 {
+			t.Errorf("%d: an authentication failure was treated as transport discovery", status)
+		}
+	}
 }
