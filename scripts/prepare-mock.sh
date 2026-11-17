@@ -39,6 +39,6 @@ for name in npm-user.conf npm-global.conf; do
   touch "$dest/$name"
 done
 export NPM_CONFIG_USERCONFIG="$dest/npm-user.conf" NPM_CONFIG_GLOBALCONFIG="$dest/npm-global.conf" NPM_CONFIG_CACHE="$dest/npm-cache"
-if [ ! -x "$dest/compiler/node_modules/.bin/lmscript" ]; then npm install --prefix "$dest/compiler" @lmctl-ai/lmctl@0.2.468 --no-audit --no-fund >&2; fi
+if [ ! -x "$dest/compiler/node_modules/.bin/lmscript" ]; then npm install --prefix "$dest/compiler" @lmctl-ai/lmctl@0.2.482 --no-audit --no-fund >&2; fi
 LMSCRIPT_BIN="$dest/compiler/node_modules/.bin/lmscript" node "$dest/src/scripts/capture-fixture.mjs" "$dest/src/examples/mcp/server.lms" "$dest/build/mcp.lmcode" >&2
 echo "export LMMCP_TEST_LMMOCK=$dest/lmmock LMMCP_TEST_PROGRAM=$dest/build/mcp.lmcode"

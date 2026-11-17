@@ -3,7 +3,7 @@ module github.com/lmctl-ai/lmmcp
 go 1.26
 
 require (
-	github.com/lmctl-ai/lmcode-go v0.6.39-0.20261103145139-99add45ad3f2
+	github.com/lmctl-ai/lmcode-go v0.6.39-0.20261117023936-2027887521b3
 	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261106153814-df0f29525bc6
 )
 

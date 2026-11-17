@@ -122,6 +122,36 @@ Dry host calls return action previews, start no process or connection, read no
 credential env values and write no files. Resource callbacks reject null receivers
 with a structured error. Dry does not simulate an MCP server.
 
+### Standard `lmcode` REST Endpoints & Stateless CLI Interfaces
+
+Because `lmmcp` embeds the 226-signature `lmcode_std_v3` standard library via `github.com/lmctl-ai/lmcode-go`, programs can also define standard REST endpoints (`RestGet`, `RestPost`, `RestPut`, `RestDelete`, `RestPatch`, `RestHead`, `RestOptions`, `RestHandler`) and stateless CLI commands/options (`CliCommand`, `CliOption`) and dispatch them with `rest_cli(...)` or `rest_serve()`:
+
+```lms
+p = _lmcode_ schema="schema.json";
+@"--server"
+fn opt_server(x: RestExchange) -> void implements CliOption {
+  x.set("server", x.query("server"));
+}
+
+@"tools"
+fn cmd_tools(x: RestExchange) -> void implements CliCommand {
+  let srv = mcp_server(x.get("server"));
+  x.json(srv.tools().to_json());
+}
+
+@"/call/:tool"
+fn get_call(x: RestExchange) -> void implements RestGet {
+  let res = mcp_call(x.get("server"), x.param("tool"), json_parse("{\"text\":\"hello\"}"));
+  x.json(res.to_json());
+}
+
+rest_config("session", "global");
+let tools_out = rest_cli(str_split("--server=fixture tools", " "));
+let call_out = rest_cli(str_split("/call/echo", " "));
+$return = json_parse("{\"tools\":" + tools_out + ",\"call\":" + call_out + "}");
+end _lmcode_
+```
+
 ## Security and verification
 
 Bind literal loopback only. Optional REST bearer auth uses `--token-env NAME` or
