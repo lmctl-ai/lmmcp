@@ -9,6 +9,8 @@ Source builds only; no release yet. Project code is [MIT licensed](LICENSE);
 [third-party notices](THIRD_PARTY_NOTICES.md) retain dependency licenses.
 See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
+**Documentation:** [Quick reference](https://www.lmctl.com/tools/lmmcp/) · [LLM skill](https://www.lmctl.com/tools/lmmcp/skill.html) · [Guide](https://www.lmctl.com/tools/lmmcp/guide.html) · [Reference](https://www.lmctl.com/tools/lmmcp/reference.html)
+
 ## Quickstart for an LLM or script
 
 Build with Go 1.26 or newer:
